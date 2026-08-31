@@ -53,6 +53,7 @@ python3 cli.py [OPTIONS]
 | `--apt-packages` | `screen`, `curl`, `htop`, `ffmpeg`, `git` | Additional packages to install |
 | `--env` | *None* | Environment variables (e.g. `KEY=VALUE`) |
 | `--ports` | `22/tcp` | Container ports to expose |
+| `--cloud-type` | `SECURE` | Type of cloud network (`SECURE`, `COMMUNITY`, or `ALL`) |
 
 ---
 

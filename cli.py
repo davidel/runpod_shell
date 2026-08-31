@@ -117,6 +117,12 @@ def main():
       default="22/tcp",
       help="Container ports to expose (default: %(default)s)"
   )
+  parser.add_argument(
+      "--cloud-type",
+      choices=["SECURE", "COMMUNITY", "ALL"],
+      default="SECURE",
+      help="Type of cloud network to deploy the pod on (default: %(default)s)"
+  )
 
   args = parser.parse_args()
 
@@ -175,6 +181,7 @@ fi"""
       "volume_in_gb": args.volume_size,
       "ports": args.ports,
       "env": container_env,
+      "cloud_type": args.cloud_type,
       "docker_args": f"/bin/bash -c '{container_disk_setup} && sleep infinity'"
   }
 
