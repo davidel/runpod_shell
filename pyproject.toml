@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "runpod-deploy"
+version = "0.1.0"
+description = "A Python command-line interface to manage RunPod instances"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "runpod",
+]
+
+[project.scripts]
+runpod-deploy = "runpod_deploy.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
