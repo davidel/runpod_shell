@@ -188,30 +188,21 @@ def resolve_gpu_type(user_input, valid_gpus):
   fatal(f"GPU type '{user_input}' not found and no close matches detected.", ValueError)
 
 
-def cmd_create(args, parser):
+def cmd_create(args):
   # Resolve and validate GPU type
   valid_gpus = get_valid_gpus()
   gpu_type = resolve_gpu_type(args.gpu_type, valid_gpus)
 
   # Load SSH public key
-  try:
-    ssh_public_key = get_ssh_key(args.ssh_key_path)
-  except FileNotFoundError as e:
-    parser.error(str(e))
+  ssh_public_key = get_ssh_key(args.ssh_key_path)
 
   # Read requirements
-  try:
-    requirements_content = read_requirements(args.requirements_path)
-  except FileNotFoundError as e:
-    parser.error(str(e))
+  requirements_content = read_requirements(args.requirements_path)
 
   # Build apt packages list
   apt_packages = []
   if args.apt_packages_file:
-    try:
-      apt_packages.extend(read_apt_packages_file(args.apt_packages_file))
-    except FileNotFoundError as e:
-      parser.error(str(e))
+    apt_packages.extend(read_apt_packages_file(args.apt_packages_file))
 
   if args.apt_packages is not None:
     apt_packages.extend(args.apt_packages)
@@ -229,10 +220,7 @@ def cmd_create(args, parser):
   # Load env file if provided
   env_file_vars = {}
   if args.env_file:
-    try:
-      env_file_vars = parse_env_file(args.env_file)
-    except FileNotFoundError as e:
-      parser.error(str(e))
+    env_file_vars = parse_env_file(args.env_file)
 
   # Set environment variables (ensuring SSH public key is present)
   container_env = env_file_vars.copy()
@@ -556,7 +544,7 @@ def main():
     )
 
   if args.command == "create":
-    cmd_create(args, parser)
+    cmd_create(args)
   elif args.command == "list":
     cmd_list(args)
   elif args.command == "stop":
