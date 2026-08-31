@@ -52,6 +52,7 @@ python3 cli.py [OPTIONS]
 | `--requirements-path` | *None* | Path to `requirements.txt` file |
 | `--apt-packages` | `screen`, `curl`, `htop`, `ffmpeg`, `git` | Additional packages to install |
 | `--env` | *None* | Environment variables (e.g. `KEY=VALUE`) |
+| `--env-file` | *None* | Path to a `.env` file containing environment variables |
 | `--ports` | `22/tcp` | Container ports to expose |
 | `--cloud-type` | `SECURE` | Type of cloud network (`SECURE`, `COMMUNITY`, or `ALL`) |
 | `--gpu-count` | `1` | Number of GPUs to allocate |
@@ -82,4 +83,10 @@ python3 cli.py \
   --gpu-type "NVIDIA RTX A6000" \
   --apt-packages screen git wget htop \
   --env CLOUDFLARE_API_KEY="your_cloudflare_key" MY_CUSTOM_VAR="hello"
+```
+
+### 4. Deploy using an Environment File
+Load credentials (e.g. Cloudflare and GCS keys) from a local `.env` file and override or augment them via command line options:
+```bash
+python3 cli.py --env-file secrets.env --env RUN_ID="run_42"
 ```

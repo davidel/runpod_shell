@@ -58,6 +58,26 @@ def read_requirements(req_path_str=None):
     return f.read()
 
 
+def parse_env_file(file_path_str):
+  file_path = Path(file_path_str).expanduser()
+  if not file_path.exists():
+    raise FileNotFoundError(f"Environment file not found at {file_path}")
+
+  env_dict = {}
+  with open(file_path, "r") as f:
+    for line in f:
+      line = line.strip()
+      # Skip comments and empty lines
+      if not line or line.startswith("#"):
+        continue
+      if "=" in line:
+        k, v = line.split("=", 1)
+        k = k.strip()
+        v = v.strip().strip("'\"")
+        env_dict[k] = v
+  return env_dict
+
+
 def main():
   parser = argparse.ArgumentParser(
       description="Create and run RunPod instances with optional persistent volume and custom environment setup."
@@ -111,6 +131,12 @@ def main():
       action=ParseEnv,
       default={},
       help="Extra environment variables to set in the container (e.g. KEY=VALUE KEY2=VALUE2)"
+  )
+  parser.add_argument(
+      "--env-file",
+      "--env_file",
+      dest="env_file",
+      help="Path to a .env file containing environment variables to set in the container"
   )
   parser.add_argument(
       "--ports",
@@ -187,8 +213,17 @@ fi"""
 
   container_disk_setup = f"{apt_install_cmd} && {setup_requirements}"
 
+  # Load env file if provided
+  env_file_vars = {}
+  if args.env_file:
+    try:
+      env_file_vars = parse_env_file(args.env_file)
+    except FileNotFoundError as e:
+      parser.error(str(e))
+
   # Set environment variables (ensuring SSH public key is present)
-  container_env = args.env.copy()
+  container_env = env_file_vars.copy()
+  container_env.update(args.env)
   container_env["PUBLIC_KEY"] = ssh_public_key
 
   # Launch Pod
@@ -227,24 +262,31 @@ fi"""
       print(f"⚠️ Error polling pod status: {e}")
     time.sleep(5)
 
-  runtime = pod_info["runtime"]
-  # Find external port for SSH
+  runtime = pod_info.get("runtime", {})
   ports = runtime.get("ports", [])
   ssh_port = None
+  ssh_host = None
+
   for p in ports:
     if p.get("privatePort") == 22:
       ssh_port = p.get("isExternal")
+      ssh_host = p.get("address")
       break
 
+  if not ssh_host:
+    ssh_host = pod_info.get("ipAddress") or pod_info.get("address")
+
+  if not ssh_host:
+    ssh_host = "your-runpod-proxy-endpoint.runpod.net"
+
   if not ssh_port:
-    # Fallback to general parsing if ports structure is different
     try:
       ssh_port = runtime["ports"]["isExternal"]
     except (KeyError, TypeError):
       ssh_port = "unknown"
 
   print(f"\n✅ Pod is ready! Connect via SSH:")
-  print(f"ssh -p {ssh_port} root@your-runpod-proxy-endpoint.runpod.net")
+  print(f"ssh -p {ssh_port} root@{ssh_host}")
 
 
 if __name__ == "__main__":
