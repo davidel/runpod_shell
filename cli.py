@@ -43,7 +43,7 @@ def get_ssh_key(key_path_str=None):
     for name in ["id_rsa.pub", "id_ed25519.pub", "id_ecdsa.pub", "id_dsa.pub"]:
       key_path = ssh_dir / name
       if key_path.exists():
-        print(f"🔑 Using default SSH key: {key_path}")
+        print(f"Using default SSH key: {key_path}")
         return read_ssh_key(key_path)
 
   fatal(
@@ -120,18 +120,18 @@ def build_container_setup_script(apt_packages, requirements_content, pip_package
 
     setup_requirements = f"""{write_requirements} && \\
 if [ -d "{venv_dir}" ] && [ ! -f "{sentinel}" ]; then \\
-    echo "⚠️ Found incomplete or broken virtual environment. Cleaning up..."; \\
+    echo "Warning: Found incomplete or broken virtual environment. Cleaning up..."; \\
     rm -rf "{venv_dir}"; \\
 fi && \\
 if [ ! -d "{venv_dir}" ]; then \\
-    echo "📦 Creating fresh venv on Network Volume..."; \\
+    echo "Creating fresh venv on Network Volume..."; \\
     python3 -m venv "{venv_dir}" && \\
     "{venv_dir}/bin/pip" install --upgrade pip && \\
     if [ -f "{volume_mount_path}/requirements.txt" ]; then "{venv_dir}/bin/pip" install -r "{volume_mount_path}/requirements.txt"; fi && \\
     {install_pip_packages} && \\
     touch "{sentinel}"; \\
 else \\
-    echo "✅ Found healthy virtual environment."; \\
+    echo "Found healthy virtual environment."; \\
     if [ "{pip_packages_str}" != "" ]; then \\
         echo "Installing command-line pip packages..."; \\
         {install_pip_packages}; \\
@@ -172,20 +172,20 @@ def resolve_gpu_type(user_input, valid_gpus):
       matches.append(gpu)
 
   if len(matches) == 1:
-    print(f"🎯 Auto-resolved GPU type '{user_input}' to '{matches[0]}'")
+    print(f"Auto-resolved GPU type '{user_input}' to '{matches[0]}'")
     return matches[0]
   elif len(matches) > 1:
     options_str = ", ".join(f"'{m}'" for m in matches)
-    fatal(f"❌ GPU type '{user_input}' is ambiguous. Did you mean one of: {options_str}?", ValueError)
+    fatal(f"GPU type '{user_input}' is ambiguous. Did you mean one of: {options_str}?", ValueError)
 
   # 4. Fuzzy match
   close_matches = difflib.get_close_matches(user_input, valid_gpus, n=3, cutoff=0.4)
   if close_matches:
     options_str = ", ".join(f"'{m}'" for m in close_matches)
-    fatal(f"❌ GPU type '{user_input}' not found. Did you mean: {options_str}?", ValueError)
+    fatal(f"GPU type '{user_input}' not found. Did you mean: {options_str}?", ValueError)
 
   # Fallback
-  fatal(f"❌ GPU type '{user_input}' not found and no close matches detected.", ValueError)
+  fatal(f"GPU type '{user_input}' not found and no close matches detected.", ValueError)
 
 
 def main():
@@ -375,7 +375,7 @@ def main():
     container_env["PUBLIC_KEY"] = ssh_public_key
 
     # Launch Pod
-    print(f"🚀 Launching RunPod instance '{args.name}'...")
+    print(f"Launching RunPod instance '{args.name}'...")
     create_args = {
         "name": args.name,
         "image_name": args.image_name,
@@ -396,17 +396,17 @@ def main():
     try:
       pod = runpod.create_pod(**create_args)
     except Exception as e:
-      fatal(f"❌ Failed to create pod: {e}", exc=e.__class__)
+      fatal(f"Failed to create pod: {e}", exc=e.__class__)
 
     # Wait for the pod to boot up
-    print("⏳ Waiting for pod to initialize...")
+    print("Waiting for pod to initialize...")
     while True:
       try:
         pod_info = runpod.get_pod(pod["id"])
         if pod_info.get("runtime") and pod_info["runtime"].get("gpus"):
           break
       except Exception as e:
-        print(f"⚠️ Error polling pod status: {e}")
+        print(f"Error polling pod status: {e}")
       time.sleep(5)
 
     runtime = pod_info.get("runtime", {})
@@ -432,7 +432,7 @@ def main():
       except (KeyError, TypeError):
         ssh_port = "unknown"
 
-    print(f"\n✅ Pod is ready! Connect via SSH:")
+    print(f"\nPod is ready! Connect via SSH:")
     print(f"ssh -p {ssh_port} root@{ssh_host}")
 
   elif args.command == "list":
@@ -440,7 +440,7 @@ def main():
     try:
       pods = runpod.get_pods()
     except Exception as e:
-      fatal(f"❌ Failed to retrieve pods: {e}", exc=e.__class__)
+      fatal(f"Failed to retrieve pods: {e}", exc=e.__class__)
 
     if not pods:
       print("No pods found.")
@@ -477,24 +477,24 @@ def main():
     print(f"Stopping pod '{args.pod_id}'...")
     try:
       runpod.stop_pod(args.pod_id)
-      print(f"✅ Stop request sent for pod '{args.pod_id}'.")
+      print(f"Stop request sent for pod '{args.pod_id}'.")
     except Exception as e:
-      fatal(f"❌ Failed to stop pod: {e}", exc=e.__class__)
+      fatal(f"Failed to stop pod: {e}", exc=e.__class__)
 
   elif args.command == "terminate":
     print(f"Terminating pod '{args.pod_id}'...")
     try:
       runpod.terminate_pod(args.pod_id)
-      print(f"✅ Termination request sent for pod '{args.pod_id}'.")
+      print(f"Termination request sent for pod '{args.pod_id}'.")
     except Exception as e:
-      fatal(f"❌ Failed to terminate pod: {e}", exc=e.__class__)
+      fatal(f"Failed to terminate pod: {e}", exc=e.__class__)
 
   elif args.command == "gpus":
     print("Fetching available GPU types...")
     try:
       gpus = runpod.get_gpus()
     except Exception as e:
-      fatal(f"❌ Failed to retrieve GPUs: {e}", exc=e.__class__)
+      fatal(f"Failed to retrieve GPUs: {e}", exc=e.__class__)
 
     if not gpus:
       print("No GPUs found.")
