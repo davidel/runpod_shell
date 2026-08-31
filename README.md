@@ -62,6 +62,8 @@ python3 cli.py create [OPTIONS]
 | `--cloud-type` | `SECURE` | Type of cloud network (`SECURE`, `COMMUNITY`, or `ALL`) |
 | `--container-disk-size` | `30` | Container local disk size in GB |
 | `--volume-mount-path` | `/workspace` | Path inside container where the network volume is mounted |
+| `--vcpu-count` | `4` | Minimum number of vCPUs to allocate |
+| `--memory` | `8` | Minimum CPU RAM in GB to allocate |
 
 ---
 

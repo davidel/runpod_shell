@@ -111,11 +111,59 @@ class TestRunPodDeployCLI(unittest.TestCase):
 
     self.assertEqual(kwargs["name"], "test-worker")
     self.assertEqual(kwargs["gpu_count"], 1)
+    self.assertEqual(kwargs["min_vcpu_count"], 4)
+    self.assertEqual(kwargs["min_memory_in_gb"], 8)
 
     docker_args = kwargs["docker_args"]
     self.assertIn(r"echo 'importlib-metadata==6.7.0; python_version < '\''3.8'\''' > /workspace/requirements.txt", docker_args)
     self.assertIn('if [ -d "/workspace/venv" ] && [ ! -f "/workspace/venv/.setup_complete" ]; then', docker_args)
     self.assertIn('touch "/workspace/venv/.setup_complete"', docker_args)
+
+  @patch("runpod_deploy.cli.get_ssh_key")
+  @patch("runpod_deploy.cli.read_requirements")
+  @patch("runpod_deploy.cli.read_apt_packages_file")
+  @patch("runpod.create_pod")
+  @patch("runpod.get_pod")
+  @patch("time.sleep")
+  def test_create_command_custom_vcpu_and_memory(self, mock_sleep, mock_get_pod, mock_create_pod, mock_apt_file, mock_req, mock_ssh_key):
+    mock_ssh_key.return_value = "ssh-rsa fake_public_key"
+    mock_req.return_value = ""
+    mock_apt_file.return_value = []
+
+    mock_create_pod.return_value = {"id": "pod-123"}
+    mock_get_pod.return_value = {
+        "id": "pod-123",
+        "desiredStatus": "RUNNING",
+        "runtime": {
+            "gpus": True,
+            "ports": [
+                {
+                    "privatePort": 22,
+                    "isExternal": 12345,
+                    "address": "12.34.56.78"
+                }
+            ]
+        }
+    }
+
+    test_args = [
+        "cli.py",
+        "--api-key", "fake-api-key",
+        "create",
+        "--name", "test-worker-custom",
+        "--vcpu-count", "8",
+        "--memory", "16"
+    ]
+
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+
+    mock_create_pod.assert_called_once()
+    kwargs = mock_create_pod.call_args[1]
+
+    self.assertEqual(kwargs["name"], "test-worker-custom")
+    self.assertEqual(kwargs["min_vcpu_count"], 8)
+    self.assertEqual(kwargs["min_memory_in_gb"], 16)
 
   @patch("sys.stderr")
   def test_fatal(self, mock_stderr):

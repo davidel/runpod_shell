@@ -295,6 +295,20 @@ def main():
       dest="volume_mount_path",
       help="Path inside the container where the network volume is mounted (default: %(default)s)"
   )
+  create_parser.add_argument(
+      "--vcpu-count",
+      "--vcpu_count",
+      type=int,
+      default=4,
+      dest="vcpu_count",
+      help="Minimum number of vCPUs to allocate (default: %(default)s)"
+  )
+  create_parser.add_argument(
+      "--memory",
+      type=int,
+      default=8,
+      help="Minimum CPU RAM in GB to allocate (default: %(default)s)"
+  )
 
   # List Command
   subparsers.add_parser("list", help="List all your RunPod instances")
@@ -386,6 +400,8 @@ def main():
         "ports": args.ports,
         "env": container_env,
         "cloud_type": args.cloud_type,
+        "min_vcpu_count": args.vcpu_count,
+        "min_memory_in_gb": args.memory,
         "docker_args": f"/bin/bash -c '{container_disk_setup} && sleep infinity'"
     }
 
