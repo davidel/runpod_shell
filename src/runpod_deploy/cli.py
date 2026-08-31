@@ -399,6 +399,7 @@ def cmd_gpus(args):
 
 def main():
   parser = argparse.ArgumentParser(
+      prog="runpod-deploy",
       description="Manage RunPod instances with optional persistent volume and custom environment setup."
   )
   parser.add_argument(
