@@ -188,6 +188,224 @@ def resolve_gpu_type(user_input, valid_gpus):
   fatal(f"GPU type '{user_input}' not found and no close matches detected.", ValueError)
 
 
+def cmd_create(args, parser):
+  # Resolve and validate GPU type
+  valid_gpus = get_valid_gpus()
+  gpu_type = resolve_gpu_type(args.gpu_type, valid_gpus)
+
+  # Load SSH public key
+  try:
+    ssh_public_key = get_ssh_key(args.ssh_key_path)
+  except FileNotFoundError as e:
+    parser.error(str(e))
+
+  # Read requirements
+  try:
+    requirements_content = read_requirements(args.requirements_path)
+  except FileNotFoundError as e:
+    parser.error(str(e))
+
+  # Build apt packages list
+  apt_packages = []
+  if args.apt_packages_file:
+    try:
+      apt_packages.extend(read_apt_packages_file(args.apt_packages_file))
+    except FileNotFoundError as e:
+      parser.error(str(e))
+
+  if args.apt_packages is not None:
+    apt_packages.extend(args.apt_packages)
+  elif not args.apt_packages_file:
+    apt_packages = ["screen", "curl", "htop", "ffmpeg", "git"]
+
+  # Build container disk setup script
+  container_disk_setup = build_container_setup_script(
+      apt_packages=apt_packages,
+      requirements_content=requirements_content,
+      pip_packages=args.pip_packages,
+      volume_mount_path=args.volume_mount_path
+  )
+
+  # Load env file if provided
+  env_file_vars = {}
+  if args.env_file:
+    try:
+      env_file_vars = parse_env_file(args.env_file)
+    except FileNotFoundError as e:
+      parser.error(str(e))
+
+  # Set environment variables (ensuring SSH public key is present)
+  container_env = env_file_vars.copy()
+  container_env.update(args.env)
+  container_env["PUBLIC_KEY"] = ssh_public_key
+
+  # Launch Pod
+  print(f"Launching RunPod instance '{args.name}'...")
+  create_args = {
+      "name": args.name,
+      "image_name": args.image_name,
+      "gpu_type_id": gpu_type,
+      "gpu_count": args.gpu_count,
+      "container_disk_in_gb": args.container_disk_size,
+      "volume_in_gb": args.volume_size,
+      "ports": args.ports,
+      "env": container_env,
+      "cloud_type": args.cloud_type,
+      "min_vcpu_count": args.vcpu_count,
+      "min_memory_in_gb": args.memory,
+      "docker_args": f"/bin/bash -c '{container_disk_setup} && sleep infinity'"
+  }
+
+  if args.volume_id:
+    create_args["network_volume_id"] = args.volume_id
+    create_args["volume_mount_path"] = args.volume_mount_path
+
+  try:
+    pod = runpod.create_pod(**create_args)
+  except Exception as e:
+    fatal(f"Failed to create pod: {e}", exc=e.__class__)
+
+  # Wait for the pod to boot up
+  print("Waiting for pod to initialize...")
+  while True:
+    try:
+      pod_info = runpod.get_pod(pod["id"])
+      if pod_info.get("runtime") and pod_info["runtime"].get("gpus"):
+        break
+    except Exception as e:
+      print(f"Error polling pod status: {e}")
+    time.sleep(5)
+
+  runtime = pod_info.get("runtime", {})
+  ports = runtime.get("ports", [])
+  ssh_port = None
+  ssh_host = None
+
+  for p in ports:
+    if p.get("privatePort") == 22:
+      ssh_port = p.get("isExternal")
+      ssh_host = p.get("address")
+      break
+
+  if not ssh_host:
+    ssh_host = pod_info.get("ipAddress") or pod_info.get("address")
+
+  if not ssh_host:
+    ssh_host = "your-runpod-proxy-endpoint.runpod.net"
+
+  if not ssh_port:
+    try:
+      ssh_port = runtime["ports"]["isExternal"]
+    except (KeyError, TypeError):
+      ssh_port = "unknown"
+
+  print(f"\nPod is ready! Connect via SSH:")
+  print(f"ssh -p {ssh_port} root@{ssh_host}")
+
+
+def cmd_list(args):
+  print("Listing your RunPod instances...")
+  try:
+    pods = runpod.get_pods()
+  except Exception as e:
+    fatal(f"Failed to retrieve pods: {e}", exc=e.__class__)
+
+  if not pods:
+    print("No pods found.")
+    return
+
+  # Print a nice table
+  print(f"{'POD ID':<20} | {'NAME':<25} | {'STATUS':<12} | {'GPU TYPE':<22} | {'SSH ENDPOINT'}")
+  print("-" * 100)
+  for p in pods:
+    pod_id = p.get("id", "N/A")
+    name = p.get("name", "N/A")
+    status = p.get("desiredStatus") or p.get("status", "N/A")
+
+    # Extract GPU info
+    gpu_type = p.get("gpuName") or p.get("gpuTypeId") or "CPU"
+    gpu_count = p.get("gpuCount", 0)
+    if gpu_count > 0:
+      gpu_display = f"{gpu_count}x {gpu_type}"
+    else:
+      gpu_display = "CPU only"
+
+    # Extract SSH endpoint
+    runtime = p.get("runtime", {})
+    ports = runtime.get("ports", []) if runtime else []
+    ssh_endpoint = "N/A"
+    for port_entry in ports:
+      if port_entry.get("privatePort") == 22:
+        ssh_endpoint = f"{port_entry.get('address')}:{port_entry.get('isExternal')}"
+        break
+
+    print(f"{pod_id:<20} | {name:<25} | {status:<12} | {gpu_display:<22} | {ssh_endpoint}")
+
+
+def cmd_stop(args):
+  print(f"Stopping pod '{args.pod_id}'...")
+  try:
+    runpod.stop_pod(args.pod_id)
+    print(f"Stop request sent for pod '{args.pod_id}'.")
+  except Exception as e:
+    fatal(f"Failed to stop pod: {e}", exc=e.__class__)
+
+
+def cmd_terminate(args):
+  print(f"Terminating pod '{args.pod_id}'...")
+  try:
+    runpod.terminate_pod(args.pod_id)
+    print(f"Termination request sent for pod '{args.pod_id}'.")
+  except Exception as e:
+    fatal(f"Failed to terminate pod: {e}", exc=e.__class__)
+
+
+def cmd_gpus(args):
+  print("Fetching available GPU types...")
+  try:
+    from runpod.api.graphql import run_graphql_query
+    query = """
+    query GpuTypes {
+      gpuTypes {
+        id
+        displayName
+        memoryInGb
+        cudaCores
+        maxGpuCount
+        securePrice
+        communityPrice
+      }
+    }
+    """
+    response = run_graphql_query(query)
+    gpus = response.get("data", {}).get("gpuTypes", [])
+  except Exception:
+    try:
+      gpus = runpod.get_gpus()
+    except Exception as e:
+      fatal(f"Failed to retrieve GPUs: {e}", exc=e.__class__)
+
+  if not gpus:
+    print("No GPUs found.")
+    return
+
+  print(f"{'GPU ID':<30} | {'DISPLAY NAME':<25} | {'VRAM (GB)':<9} | {'CUDA CORES':<10} | {'MAX':<3} | {'SECURE':<7} | {'COMMUNITY':<9}")
+  print("-" * 110)
+  for g in gpus:
+    gpu_id = g.get("id", "N/A")
+    display_name = g.get("displayName", "N/A")
+    ram = g.get("memoryInGb", "N/A")
+    cores = g.get("cudaCores", "N/A")
+    max_gpus = g.get("maxGpuCount", "N/A")
+    sec_price = g.get("securePrice")
+    comm_price = g.get("communityPrice")
+
+    sec_price_str = f"${sec_price:.2f}/h" if isinstance(sec_price, (int, float)) else "N/A"
+    comm_price_str = f"${comm_price:.2f}/h" if isinstance(comm_price, (int, float)) else "N/A"
+
+    print(f"{gpu_id:<30} | {display_name:<25} | {ram:<9} | {cores:<10} | {max_gpus:<3} | {sec_price_str:<7} | {comm_price_str:<9}")
+
+
 def main():
   parser = argparse.ArgumentParser(
       description="Manage RunPod instances with optional persistent volume and custom environment setup."
@@ -338,217 +556,15 @@ def main():
     )
 
   if args.command == "create":
-    # Resolve and validate GPU type
-    valid_gpus = get_valid_gpus()
-    gpu_type = resolve_gpu_type(args.gpu_type, valid_gpus)
-
-    # Load SSH public key
-    try:
-      ssh_public_key = get_ssh_key(args.ssh_key_path)
-    except FileNotFoundError as e:
-      parser.error(str(e))
-
-    # Read requirements
-    try:
-      requirements_content = read_requirements(args.requirements_path)
-    except FileNotFoundError as e:
-      parser.error(str(e))
-
-    # Build apt packages list
-    apt_packages = []
-    if args.apt_packages_file:
-      try:
-        apt_packages.extend(read_apt_packages_file(args.apt_packages_file))
-      except FileNotFoundError as e:
-        parser.error(str(e))
-
-    if args.apt_packages is not None:
-      apt_packages.extend(args.apt_packages)
-    elif not args.apt_packages_file:
-      apt_packages = ["screen", "curl", "htop", "ffmpeg", "git"]
-
-    # Build container disk setup script
-    container_disk_setup = build_container_setup_script(
-        apt_packages=apt_packages,
-        requirements_content=requirements_content,
-        pip_packages=args.pip_packages,
-        volume_mount_path=args.volume_mount_path
-    )
-
-    # Load env file if provided
-    env_file_vars = {}
-    if args.env_file:
-      try:
-        env_file_vars = parse_env_file(args.env_file)
-      except FileNotFoundError as e:
-        parser.error(str(e))
-
-    # Set environment variables (ensuring SSH public key is present)
-    container_env = env_file_vars.copy()
-    container_env.update(args.env)
-    container_env["PUBLIC_KEY"] = ssh_public_key
-
-    # Launch Pod
-    print(f"Launching RunPod instance '{args.name}'...")
-    create_args = {
-        "name": args.name,
-        "image_name": args.image_name,
-        "gpu_type_id": gpu_type,
-        "gpu_count": args.gpu_count,
-        "container_disk_in_gb": args.container_disk_size,
-        "volume_in_gb": args.volume_size,
-        "ports": args.ports,
-        "env": container_env,
-        "cloud_type": args.cloud_type,
-        "min_vcpu_count": args.vcpu_count,
-        "min_memory_in_gb": args.memory,
-        "docker_args": f"/bin/bash -c '{container_disk_setup} && sleep infinity'"
-    }
-
-    if args.volume_id:
-      create_args["network_volume_id"] = args.volume_id
-      create_args["volume_mount_path"] = args.volume_mount_path
-
-    try:
-      pod = runpod.create_pod(**create_args)
-    except Exception as e:
-      fatal(f"Failed to create pod: {e}", exc=e.__class__)
-
-    # Wait for the pod to boot up
-    print("Waiting for pod to initialize...")
-    while True:
-      try:
-        pod_info = runpod.get_pod(pod["id"])
-        if pod_info.get("runtime") and pod_info["runtime"].get("gpus"):
-          break
-      except Exception as e:
-        print(f"Error polling pod status: {e}")
-      time.sleep(5)
-
-    runtime = pod_info.get("runtime", {})
-    ports = runtime.get("ports", [])
-    ssh_port = None
-    ssh_host = None
-
-    for p in ports:
-      if p.get("privatePort") == 22:
-        ssh_port = p.get("isExternal")
-        ssh_host = p.get("address")
-        break
-
-    if not ssh_host:
-      ssh_host = pod_info.get("ipAddress") or pod_info.get("address")
-
-    if not ssh_host:
-      ssh_host = "your-runpod-proxy-endpoint.runpod.net"
-
-    if not ssh_port:
-      try:
-        ssh_port = runtime["ports"]["isExternal"]
-      except (KeyError, TypeError):
-        ssh_port = "unknown"
-
-    print(f"\nPod is ready! Connect via SSH:")
-    print(f"ssh -p {ssh_port} root@{ssh_host}")
-
+    cmd_create(args, parser)
   elif args.command == "list":
-    print("Listing your RunPod instances...")
-    try:
-      pods = runpod.get_pods()
-    except Exception as e:
-      fatal(f"Failed to retrieve pods: {e}", exc=e.__class__)
-
-    if not pods:
-      print("No pods found.")
-      return
-
-    # Print a nice table
-    print(f"{'POD ID':<20} | {'NAME':<25} | {'STATUS':<12} | {'GPU TYPE':<22} | {'SSH ENDPOINT'}")
-    print("-" * 100)
-    for p in pods:
-      pod_id = p.get("id", "N/A")
-      name = p.get("name", "N/A")
-      status = p.get("desiredStatus") or p.get("status", "N/A")
-
-      # Extract GPU info
-      gpu_type = p.get("gpuName") or p.get("gpuTypeId") or "CPU"
-      gpu_count = p.get("gpuCount", 0)
-      if gpu_count > 0:
-        gpu_display = f"{gpu_count}x {gpu_type}"
-      else:
-        gpu_display = "CPU only"
-
-      # Extract SSH endpoint
-      runtime = p.get("runtime", {})
-      ports = runtime.get("ports", []) if runtime else []
-      ssh_endpoint = "N/A"
-      for port_entry in ports:
-        if port_entry.get("privatePort") == 22:
-          ssh_endpoint = f"{port_entry.get('address')}:{port_entry.get('isExternal')}"
-          break
-
-      print(f"{pod_id:<20} | {name:<25} | {status:<12} | {gpu_display:<22} | {ssh_endpoint}")
-
+    cmd_list(args)
   elif args.command == "stop":
-    print(f"Stopping pod '{args.pod_id}'...")
-    try:
-      runpod.stop_pod(args.pod_id)
-      print(f"Stop request sent for pod '{args.pod_id}'.")
-    except Exception as e:
-      fatal(f"Failed to stop pod: {e}", exc=e.__class__)
-
+    cmd_stop(args)
   elif args.command == "terminate":
-    print(f"Terminating pod '{args.pod_id}'...")
-    try:
-      runpod.terminate_pod(args.pod_id)
-      print(f"Termination request sent for pod '{args.pod_id}'.")
-    except Exception as e:
-      fatal(f"Failed to terminate pod: {e}", exc=e.__class__)
-
+    cmd_terminate(args)
   elif args.command == "gpus":
-    print("Fetching available GPU types...")
-    try:
-      from runpod.api.graphql import run_graphql_query
-      query = """
-      query GpuTypes {
-        gpuTypes {
-          id
-          displayName
-          memoryInGb
-          cudaCores
-          maxGpuCount
-          securePrice
-          communityPrice
-        }
-      }
-      """
-      response = run_graphql_query(query)
-      gpus = response.get("data", {}).get("gpuTypes", [])
-    except Exception:
-      try:
-        gpus = runpod.get_gpus()
-      except Exception as e:
-        fatal(f"Failed to retrieve GPUs: {e}", exc=e.__class__)
-
-    if not gpus:
-      print("No GPUs found.")
-      return
-
-    print(f"{'GPU ID':<30} | {'DISPLAY NAME':<25} | {'VRAM (GB)':<9} | {'CUDA CORES':<10} | {'MAX':<3} | {'SECURE':<7} | {'COMMUNITY':<9}")
-    print("-" * 110)
-    for g in gpus:
-      gpu_id = g.get("id", "N/A")
-      display_name = g.get("displayName", "N/A")
-      ram = g.get("memoryInGb", "N/A")
-      cores = g.get("cudaCores", "N/A")
-      max_gpus = g.get("maxGpuCount", "N/A")
-      sec_price = g.get("securePrice")
-      comm_price = g.get("communityPrice")
-
-      sec_price_str = f"${sec_price:.2f}/h" if isinstance(sec_price, (int, float)) else "N/A"
-      comm_price_str = f"${comm_price:.2f}/h" if isinstance(comm_price, (int, float)) else "N/A"
-
-      print(f"{gpu_id:<30} | {display_name:<25} | {ram:<9} | {cores:<10} | {max_gpus:<3} | {sec_price_str:<7} | {comm_price_str:<9}")
+    cmd_gpus(args)
 
 
 if __name__ == "__main__":
