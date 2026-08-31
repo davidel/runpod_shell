@@ -51,6 +51,7 @@ python3 cli.py [OPTIONS]
 | `--ssh-key-path` | *None* | Path to public key (checks default paths if omitted) |
 | `--requirements-path` | *None* | Path to `requirements.txt` file |
 | `--apt-packages` | `screen`, `curl`, `htop`, `ffmpeg`, `git` | Additional packages to install |
+| `--apt-packages-file` | *None* | Path to a file containing extra apt packages to install |
 | `--env` | *None* | Environment variables (e.g. `KEY=VALUE`) |
 | `--env-file` | *None* | Path to a `.env` file containing environment variables |
 | `--ports` | `22/tcp` | Container ports to expose |
@@ -89,4 +90,10 @@ python3 cli.py \
 Load credentials (e.g. Cloudflare and GCS keys) from a local `.env` file and override or augment them via command line options:
 ```bash
 python3 cli.py --env-file secrets.env --env RUN_ID="run_42"
+```
+
+### 5. Deploy using an Apt Packages File
+Specify a file containing one package per line to install:
+```bash
+python3 cli.py --apt-packages-file apt-packages.txt
 ```

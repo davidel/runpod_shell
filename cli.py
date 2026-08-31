@@ -78,6 +78,23 @@ def parse_env_file(file_path_str):
   return env_dict
 
 
+def read_apt_packages_file(file_path_str):
+  file_path = Path(file_path_str).expanduser()
+  if not file_path.exists():
+    raise FileNotFoundError(f"Apt packages file not found at {file_path}")
+
+  packages = []
+  with open(file_path, "r") as f:
+    for line in f:
+      line = line.strip()
+      # Skip comments and empty lines
+      if not line or line.startswith("#"):
+        continue
+      # Split by whitespace to handle multiple packages on same line if they exist
+      packages.extend(line.split())
+  return packages
+
+
 def main():
   parser = argparse.ArgumentParser(
       description="Create and run RunPod instances with optional persistent volume and custom environment setup."
@@ -122,8 +139,13 @@ def main():
   parser.add_argument(
       "--apt-packages",
       nargs="+",
-      default=["screen", "curl", "htop", "ffmpeg", "git"],
-      help="Extra apt packages to install (default: %(default)s)"
+      help="Extra apt packages to install (default: screen curl htop ffmpeg git)"
+  )
+  parser.add_argument(
+      "--apt-packages-file",
+      "--apt_packages_file",
+      dest="apt_packages_file",
+      help="Path to a file containing extra apt packages to install"
   )
   parser.add_argument(
       "--env",
@@ -194,9 +216,22 @@ def main():
   except FileNotFoundError as e:
     parser.error(str(e))
 
+  # Build apt packages list
+  apt_packages = []
+  if args.apt_packages_file:
+    try:
+      apt_packages.extend(read_apt_packages_file(args.apt_packages_file))
+    except FileNotFoundError as e:
+      parser.error(str(e))
+
+  if args.apt_packages is not None:
+    apt_packages.extend(args.apt_packages)
+  elif not args.apt_packages_file:
+    apt_packages = ["screen", "curl", "htop", "ffmpeg", "git"]
+
   # Build container disk setup script
-  apt_packages_str = " ".join(args.apt_packages)
-  apt_install_cmd = f"apt-get update && apt-get install -y {apt_packages_str}" if args.apt_packages else "true"
+  apt_packages_str = " ".join(apt_packages)
+  apt_install_cmd = f"apt-get update && apt-get install -y {apt_packages_str}" if apt_packages else "true"
 
   if requirements_content.strip():
     setup_requirements = f"""echo '{requirements_content}' > /workspace/requirements.txt && \\
