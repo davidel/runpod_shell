@@ -136,6 +136,9 @@ else \\
         echo "Installing command-line pip packages..."; \\
         {install_pip_packages}; \\
     fi \\
+fi && \\
+if [ -d "{venv_dir}" ] && [ -f "/root/.bashrc" ] && ! grep -q "source {venv_dir}/bin/activate" /root/.bashrc; then \\
+    echo "source {venv_dir}/bin/activate" >> /root/.bashrc; \\
 fi"""
   else:
     setup_requirements = "true"

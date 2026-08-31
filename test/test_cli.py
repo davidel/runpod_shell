@@ -116,8 +116,8 @@ class TestRunPodDeployCLI(unittest.TestCase):
 
     docker_args = kwargs["docker_args"]
     self.assertIn(r"echo 'importlib-metadata==6.7.0; python_version < '\''3.8'\''' > /workspace/requirements.txt", docker_args)
-    self.assertIn('if [ -d "/workspace/venv" ] && [ ! -f "/workspace/venv/.setup_complete" ]; then', docker_args)
-    self.assertIn('touch "/workspace/venv/.setup_complete"', docker_args)
+    self.assertIn('if [ -d "/workspace/venv" ] && [ -f "/root/.bashrc" ] && ! grep -q "source /workspace/venv/bin/activate" /root/.bashrc; then', docker_args)
+    self.assertIn('echo "source /workspace/venv/bin/activate" >> /root/.bashrc', docker_args)
 
   @patch("runpod_deploy.cli.get_ssh_key")
   @patch("runpod_deploy.cli.read_requirements")
