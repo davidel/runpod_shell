@@ -93,7 +93,7 @@ python3 cli.py terminate <pod-id>
 ---
 
 ### 5. `gpus`
-Retrieves and lists all available GPU models, their display names, and VRAM sizes currently supported on RunPod.
+Retrieves and lists all available GPU models, including display names, VRAM sizes, CUDA Cores, maximum GPU configurations, and hourly pricing (Secure vs. Community cloud).
 
 ```bash
 python3 cli.py gpus

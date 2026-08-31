@@ -156,7 +156,7 @@ class TestRunPodDeployCLI(unittest.TestCase):
     test_args = ["cli.py", "gpus"]
     with patch.object(sys, "argv", test_args):
       cli.main()
-    mock_stdout.write.assert_any_call("RTX 4090                       | RTX 4090                  | 24        ")
+    mock_stdout.write.assert_any_call("RTX 4090                       | RTX 4090                  | 24        | N/A        | N/A | N/A     | N/A      ")
 
 
 if __name__ == "__main__":

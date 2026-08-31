@@ -492,21 +492,47 @@ def main():
   elif args.command == "gpus":
     print("Fetching available GPU types...")
     try:
-      gpus = runpod.get_gpus()
-    except Exception as e:
-      fatal(f"Failed to retrieve GPUs: {e}", exc=e.__class__)
+      from runpod.api.graphql import run_graphql_query
+      query = """
+      query GpuTypes {
+        gpuTypes {
+          id
+          displayName
+          memoryInGb
+          cudaCores
+          maxGpuCount
+          securePrice
+          communityPrice
+        }
+      }
+      """
+      response = run_graphql_query(query)
+      gpus = response.get("data", {}).get("gpuTypes", [])
+    except Exception:
+      try:
+        gpus = runpod.get_gpus()
+      except Exception as e:
+        fatal(f"Failed to retrieve GPUs: {e}", exc=e.__class__)
 
     if not gpus:
       print("No GPUs found.")
       return
 
-    print(f"{'GPU ID':<30} | {'DISPLAY NAME':<25} | {'RAM (GB)':<10}")
-    print("-" * 75)
+    print(f"{'GPU ID':<30} | {'DISPLAY NAME':<25} | {'VRAM (GB)':<9} | {'CUDA CORES':<10} | {'MAX':<3} | {'SECURE':<7} | {'COMMUNITY':<9}")
+    print("-" * 110)
     for g in gpus:
       gpu_id = g.get("id", "N/A")
       display_name = g.get("displayName", "N/A")
       ram = g.get("memoryInGb", "N/A")
-      print(f"{gpu_id:<30} | {display_name:<25} | {ram:<10}")
+      cores = g.get("cudaCores", "N/A")
+      max_gpus = g.get("maxGpuCount", "N/A")
+      sec_price = g.get("securePrice")
+      comm_price = g.get("communityPrice")
+
+      sec_price_str = f"${sec_price:.2f}/h" if isinstance(sec_price, (int, float)) else "N/A"
+      comm_price_str = f"${comm_price:.2f}/h" if isinstance(comm_price, (int, float)) else "N/A"
+
+      print(f"{gpu_id:<30} | {display_name:<25} | {ram:<9} | {cores:<10} | {max_gpus:<3} | {sec_price_str:<7} | {comm_price_str:<9}")
 
 
 if __name__ == "__main__":
