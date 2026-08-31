@@ -1,6 +1,7 @@
 import argparse
 import os
 from pathlib import Path
+import sys
 import time
 import runpod
 
@@ -16,6 +17,11 @@ class ParseEnv(argparse.Action):
       else:
         parser.error(f"Invalid environment variable format: {val}. Expected KEY=VALUE.")
     setattr(namespace, self.dest, env_dict)
+
+
+def fatal(msg, exc=RuntimeError):
+  print(msg, file=sys.stderr)
+  raise exc(msg)
 
 
 def read_ssh_key(key_path):
@@ -336,8 +342,7 @@ def main():
     try:
       pod = runpod.create_pod(**create_args)
     except Exception as e:
-      print(f"❌ Failed to create pod: {e}")
-      return
+      fatal(f"❌ Failed to create pod: {e}", exc=e.__class__)
 
     # Wait for the pod to boot up
     print("⏳ Waiting for pod to initialize...")
@@ -381,8 +386,7 @@ def main():
     try:
       pods = runpod.get_pods()
     except Exception as e:
-      print(f"❌ Failed to retrieve pods: {e}")
-      return
+      fatal(f"❌ Failed to retrieve pods: {e}", exc=e.__class__)
 
     if not pods:
       print("No pods found.")
@@ -421,7 +425,7 @@ def main():
       runpod.stop_pod(args.pod_id)
       print(f"✅ Stop request sent for pod '{args.pod_id}'.")
     except Exception as e:
-      print(f"❌ Failed to stop pod: {e}")
+      fatal(f"❌ Failed to stop pod: {e}", exc=e.__class__)
 
   elif args.command == "terminate":
     print(f"Terminating pod '{args.pod_id}'...")
@@ -429,7 +433,7 @@ def main():
       runpod.terminate_pod(args.pod_id)
       print(f"✅ Termination request sent for pod '{args.pod_id}'.")
     except Exception as e:
-      print(f"❌ Failed to terminate pod: {e}")
+      fatal(f"❌ Failed to terminate pod: {e}", exc=e.__class__)
 
 
 if __name__ == "__main__":

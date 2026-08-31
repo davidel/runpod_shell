@@ -117,6 +117,12 @@ class TestRunPodDeployCLI(unittest.TestCase):
     self.assertIn('if [ -d "/workspace/venv" ] && [ ! -f "/workspace/venv/.setup_complete" ]; then', docker_args)
     self.assertIn('touch "/workspace/venv/.setup_complete"', docker_args)
 
+  @patch("sys.stderr")
+  def test_fatal(self, mock_stderr):
+    with self.assertRaises(ValueError):
+      cli.fatal("An error occurred", exc=ValueError)
+    mock_stderr.write.assert_any_call("An error occurred")
+
 
 if __name__ == "__main__":
   unittest.main()
