@@ -137,6 +137,13 @@ def main():
       help="Path to requirements.txt file (optional)"
   )
   parser.add_argument(
+      "--pip-packages",
+      "--pip_packages",
+      dest="pip_packages",
+      nargs="+",
+      help="Extra python packages to install in the virtual environment"
+  )
+  parser.add_argument(
       "--apt-packages",
       nargs="+",
       help="Extra apt packages to install (default: screen curl htop ffmpeg git)"
@@ -233,15 +240,24 @@ def main():
   apt_packages_str = " ".join(apt_packages)
   apt_install_cmd = f"apt-get update && apt-get install -y {apt_packages_str}" if apt_packages else "true"
 
-  if requirements_content.strip():
-    setup_requirements = f"""echo '{requirements_content}' > /workspace/requirements.txt && \\
+  write_requirements = f"echo '{requirements_content}' > /workspace/requirements.txt" if requirements_content.strip() else "true"
+  pip_packages_str = " ".join(args.pip_packages) if args.pip_packages else ""
+
+  if requirements_content.strip() or pip_packages_str:
+    install_pip_packages = f"/workspace/venv/bin/pip install {pip_packages_str}" if pip_packages_str else "true"
+    setup_requirements = f"""{write_requirements} && \\
 if [ ! -d "/workspace/venv" ]; then \\
     echo "📦 Creating fresh venv on Network Volume..."; \\
     python3 -m venv /workspace/venv && \\
     /workspace/venv/bin/pip install --upgrade pip && \\
-    /workspace/venv/bin/pip install -r /workspace/requirements.txt; \\
+    if [ -f "/workspace/requirements.txt" ]; then /workspace/venv/bin/pip install -r /workspace/requirements.txt; fi && \\
+    {install_pip_packages}; \\
 else \\
-    echo "✅ Found existing venv on Network Volume. Skipping installation."; \\
+    echo "✅ Found existing venv on Network Volume."; \\
+    if [ "{pip_packages_str}" != "" ]; then \\
+        echo "Installing command-line pip packages..."; \\
+        {install_pip_packages}; \\
+    fi \\
 fi"""
   else:
     setup_requirements = "true"

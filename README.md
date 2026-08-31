@@ -50,6 +50,7 @@ python3 cli.py [OPTIONS]
 | `--volume-size` | `50` | Container disk size in GB |
 | `--ssh-key-path` | *None* | Path to public key (checks default paths if omitted) |
 | `--requirements-path` | *None* | Path to `requirements.txt` file |
+| `--pip-packages` | *None* | Extra Python packages to install in the virtual environment |
 | `--apt-packages` | `screen`, `curl`, `htop`, `ffmpeg`, `git` | Additional packages to install |
 | `--apt-packages-file` | *None* | Path to a file containing extra apt packages to install |
 | `--env` | *None* | Environment variables (e.g. `KEY=VALUE`) |
@@ -96,4 +97,10 @@ python3 cli.py --env-file secrets.env --env RUN_ID="run_42"
 Specify a file containing one package per line to install:
 ```bash
 python3 cli.py --apt-packages-file apt-packages.txt
+```
+
+### 6. Install Python Packages via CLI
+Install specific packages into the virtual environment on top of what is in your requirements file:
+```bash
+python3 cli.py --requirements-path requirements.txt --pip-packages torchinfo matplotlib
 ```
