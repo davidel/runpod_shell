@@ -123,6 +123,25 @@ def main():
       default="SECURE",
       help="Type of cloud network to deploy the pod on (default: %(default)s)"
   )
+  parser.add_argument(
+      "--gpu-count",
+      type=int,
+      default=1,
+      help="Number of GPUs to allocate (default: %(default)s)"
+  )
+  parser.add_argument(
+      "--container-disk-size",
+      type=int,
+      default=30,
+      help="Container local disk size in GB (default: %(default)s)"
+  )
+  parser.add_argument(
+      "--volume-mount-path",
+      "--volume_mount_path",
+      default="/workspace",
+      dest="volume_mount_path",
+      help="Path inside the container where the network volume is mounted (default: %(default)s)"
+  )
 
   args = parser.parse_args()
 
@@ -178,6 +197,8 @@ fi"""
       "name": args.name,
       "image_name": args.image_name,
       "gpu_type_id": args.gpu_type,
+      "gpu_count": args.gpu_count,
+      "container_disk_in_gb": args.container_disk_size,
       "volume_in_gb": args.volume_size,
       "ports": args.ports,
       "env": container_env,
@@ -187,6 +208,7 @@ fi"""
 
   if args.volume_id:
     create_args["network_volume_id"] = args.volume_id
+    create_args["volume_mount_path"] = args.volume_mount_path
 
   try:
     pod = runpod.create_pod(**create_args)

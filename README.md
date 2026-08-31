@@ -54,6 +54,9 @@ python3 cli.py [OPTIONS]
 | `--env` | *None* | Environment variables (e.g. `KEY=VALUE`) |
 | `--ports` | `22/tcp` | Container ports to expose |
 | `--cloud-type` | `SECURE` | Type of cloud network (`SECURE`, `COMMUNITY`, or `ALL`) |
+| `--gpu-count` | `1` | Number of GPUs to allocate |
+| `--container-disk-size` | `30` | Container local disk size in GB |
+| `--volume-mount-path` | `/workspace` | Path inside container where the network volume is mounted |
 
 ---
 
