@@ -97,106 +97,122 @@ def read_apt_packages_file(file_path_str):
 
 def main():
   parser = argparse.ArgumentParser(
-      description="Create and run RunPod instances with optional persistent volume and custom environment setup."
+      description="Manage RunPod instances with optional persistent volume and custom environment setup."
   )
   parser.add_argument(
       "--api-key",
       help="RunPod API Key (can also be set via RUNPOD_API_KEY environment variable)"
   )
-  parser.add_argument(
+
+  subparsers = parser.add_subparsers(dest="command", required=True, help="Subcommands")
+
+  # Create Command
+  create_parser = subparsers.add_parser("create", help="Create and launch a new RunPod instance")
+  create_parser.add_argument(
       "--name",
       default="persistent-worker",
       help="Name of the RunPod instance (default: %(default)s)"
   )
-  parser.add_argument(
+  create_parser.add_argument(
       "--volume-id",
       help="Network volume ID to attach (optional)"
   )
-  parser.add_argument(
+  create_parser.add_argument(
       "--image-name",
       default="runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404",
       help="Base image name (default: %(default)s)"
   )
-  parser.add_argument(
+  create_parser.add_argument(
       "--gpu-type",
       default="NVIDIA GeForce RTX 4090",
       help="GPU type ID (default: %(default)s)"
   )
-  parser.add_argument(
+  create_parser.add_argument(
       "--volume-size",
       type=int,
       default=50,
       help="Container disk volume size in GB (default: %(default)s)"
   )
-  parser.add_argument(
+  create_parser.add_argument(
       "--ssh-key-path",
       help="Path to SSH public key file. If omitted, searches default keys in ~/.ssh/"
   )
-  parser.add_argument(
+  create_parser.add_argument(
       "--requirements-path",
       help="Path to requirements.txt file (optional)"
   )
-  parser.add_argument(
+  create_parser.add_argument(
       "--pip-packages",
       "--pip_packages",
       dest="pip_packages",
       nargs="+",
       help="Extra python packages to install in the virtual environment"
   )
-  parser.add_argument(
+  create_parser.add_argument(
       "--apt-packages",
       nargs="+",
       help="Extra apt packages to install (default: screen curl htop ffmpeg git)"
   )
-  parser.add_argument(
+  create_parser.add_argument(
       "--apt-packages-file",
       "--apt_packages_file",
       dest="apt_packages_file",
       help="Path to a file containing extra apt packages to install"
   )
-  parser.add_argument(
+  create_parser.add_argument(
       "--env",
       nargs="+",
       action=ParseEnv,
       default={},
       help="Extra environment variables to set in the container (e.g. KEY=VALUE KEY2=VALUE2)"
   )
-  parser.add_argument(
+  create_parser.add_argument(
       "--env-file",
       "--env_file",
       dest="env_file",
       help="Path to a .env file containing environment variables to set in the container"
   )
-  parser.add_argument(
+  create_parser.add_argument(
       "--ports",
       default="22/tcp",
       help="Container ports to expose (default: %(default)s)"
   )
-  parser.add_argument(
+  create_parser.add_argument(
       "--cloud-type",
       choices=["SECURE", "COMMUNITY", "ALL"],
       default="SECURE",
       help="Type of cloud network to deploy the pod on (default: %(default)s)"
   )
-  parser.add_argument(
+  create_parser.add_argument(
       "--gpu-count",
       type=int,
       default=1,
       help="Number of GPUs to allocate (default: %(default)s)"
   )
-  parser.add_argument(
+  create_parser.add_argument(
       "--container-disk-size",
       type=int,
       default=30,
       help="Container local disk size in GB (default: %(default)s)"
   )
-  parser.add_argument(
+  create_parser.add_argument(
       "--volume-mount-path",
       "--volume_mount_path",
       default="/workspace",
       dest="volume_mount_path",
       help="Path inside the container where the network volume is mounted (default: %(default)s)"
   )
+
+  # List Command
+  subparsers.add_parser("list", help="List all your RunPod instances")
+
+  # Stop Command
+  stop_parser = subparsers.add_parser("stop", help="Stop a running RunPod instance")
+  stop_parser.add_argument("pod_id", help="The ID of the pod to stop")
+
+  # Terminate Command
+  terminate_parser = subparsers.add_parser("terminate", help="Terminate (delete) a RunPod instance")
+  terminate_parser.add_argument("pod_id", help="The ID of the pod to terminate")
 
   args = parser.parse_args()
 
@@ -211,41 +227,42 @@ def main():
         "RunPod API key must be provided via --api-key or the RUNPOD_API_KEY environment variable."
     )
 
-  # Load SSH public key
-  try:
-    ssh_public_key = get_ssh_key(args.ssh_key_path)
-  except FileNotFoundError as e:
-    parser.error(str(e))
-
-  # Read requirements
-  try:
-    requirements_content = read_requirements(args.requirements_path)
-  except FileNotFoundError as e:
-    parser.error(str(e))
-
-  # Build apt packages list
-  apt_packages = []
-  if args.apt_packages_file:
+  if args.command == "create":
+    # Load SSH public key
     try:
-      apt_packages.extend(read_apt_packages_file(args.apt_packages_file))
+      ssh_public_key = get_ssh_key(args.ssh_key_path)
     except FileNotFoundError as e:
       parser.error(str(e))
 
-  if args.apt_packages is not None:
-    apt_packages.extend(args.apt_packages)
-  elif not args.apt_packages_file:
-    apt_packages = ["screen", "curl", "htop", "ffmpeg", "git"]
+    # Read requirements
+    try:
+      requirements_content = read_requirements(args.requirements_path)
+    except FileNotFoundError as e:
+      parser.error(str(e))
 
-  # Build container disk setup script
-  apt_packages_str = " ".join(apt_packages)
-  apt_install_cmd = f"apt-get update && apt-get install -y {apt_packages_str}" if apt_packages else "true"
+    # Build apt packages list
+    apt_packages = []
+    if args.apt_packages_file:
+      try:
+        apt_packages.extend(read_apt_packages_file(args.apt_packages_file))
+      except FileNotFoundError as e:
+        parser.error(str(e))
 
-  write_requirements = f"echo '{requirements_content}' > /workspace/requirements.txt" if requirements_content.strip() else "true"
-  pip_packages_str = " ".join(args.pip_packages) if args.pip_packages else ""
+    if args.apt_packages is not None:
+      apt_packages.extend(args.apt_packages)
+    elif not args.apt_packages_file:
+      apt_packages = ["screen", "curl", "htop", "ffmpeg", "git"]
 
-  if requirements_content.strip() or pip_packages_str:
-    install_pip_packages = f"/workspace/venv/bin/pip install {pip_packages_str}" if pip_packages_str else "true"
-    setup_requirements = f"""{write_requirements} && \\
+    # Build container disk setup script
+    apt_packages_str = " ".join(apt_packages)
+    apt_install_cmd = f"apt-get update && apt-get install -y {apt_packages_str}" if apt_packages else "true"
+
+    write_requirements = f"echo '{requirements_content}' > /workspace/requirements.txt" if requirements_content.strip() else "true"
+    pip_packages_str = " ".join(args.pip_packages) if args.pip_packages else ""
+
+    if requirements_content.strip() or pip_packages_str:
+      install_pip_packages = f"/workspace/venv/bin/pip install {pip_packages_str}" if pip_packages_str else "true"
+      setup_requirements = f"""{write_requirements} && \\
 if [ ! -d "/workspace/venv" ]; then \\
     echo "📦 Creating fresh venv on Network Volume..."; \\
     python3 -m venv /workspace/venv && \\
@@ -259,85 +276,140 @@ else \\
         {install_pip_packages}; \\
     fi \\
 fi"""
-  else:
-    setup_requirements = "true"
+    else:
+      setup_requirements = "true"
 
-  container_disk_setup = f"{apt_install_cmd} && {setup_requirements}"
+    container_disk_setup = f"{apt_install_cmd} && {setup_requirements}"
 
-  # Load env file if provided
-  env_file_vars = {}
-  if args.env_file:
+    # Load env file if provided
+    env_file_vars = {}
+    if args.env_file:
+      try:
+        env_file_vars = parse_env_file(args.env_file)
+      except FileNotFoundError as e:
+        parser.error(str(e))
+
+    # Set environment variables (ensuring SSH public key is present)
+    container_env = env_file_vars.copy()
+    container_env.update(args.env)
+    container_env["PUBLIC_KEY"] = ssh_public_key
+
+    # Launch Pod
+    print(f"🚀 Launching RunPod instance '{args.name}'...")
+    create_args = {
+        "name": args.name,
+        "image_name": args.image_name,
+        "gpu_type_id": args.gpu_type,
+        "gpu_count": args.gpu_count,
+        "container_disk_in_gb": args.container_disk_size,
+        "volume_in_gb": args.volume_size,
+        "ports": args.ports,
+        "env": container_env,
+        "cloud_type": args.cloud_type,
+        "docker_args": f"/bin/bash -c '{container_disk_setup} && sleep infinity'"
+    }
+
+    if args.volume_id:
+      create_args["network_volume_id"] = args.volume_id
+      create_args["volume_mount_path"] = args.volume_mount_path
+
     try:
-      env_file_vars = parse_env_file(args.env_file)
-    except FileNotFoundError as e:
-      parser.error(str(e))
-
-  # Set environment variables (ensuring SSH public key is present)
-  container_env = env_file_vars.copy()
-  container_env.update(args.env)
-  container_env["PUBLIC_KEY"] = ssh_public_key
-
-  # Launch Pod
-  print(f"🚀 Launching RunPod instance '{args.name}'...")
-  create_args = {
-      "name": args.name,
-      "image_name": args.image_name,
-      "gpu_type_id": args.gpu_type,
-      "gpu_count": args.gpu_count,
-      "container_disk_in_gb": args.container_disk_size,
-      "volume_in_gb": args.volume_size,
-      "ports": args.ports,
-      "env": container_env,
-      "cloud_type": args.cloud_type,
-      "docker_args": f"/bin/bash -c '{container_disk_setup} && sleep infinity'"
-  }
-
-  if args.volume_id:
-    create_args["network_volume_id"] = args.volume_id
-    create_args["volume_mount_path"] = args.volume_mount_path
-
-  try:
-    pod = runpod.create_pod(**create_args)
-  except Exception as e:
-    print(f"❌ Failed to create pod: {e}")
-    return
-
-  # Wait for the pod to boot up
-  print("⏳ Waiting for pod to initialize...")
-  while True:
-    try:
-      pod_info = runpod.get_pod(pod["id"])
-      if pod_info.get("runtime") and pod_info["runtime"].get("gpus"):
-        break
+      pod = runpod.create_pod(**create_args)
     except Exception as e:
-      print(f"⚠️ Error polling pod status: {e}")
-    time.sleep(5)
+      print(f"❌ Failed to create pod: {e}")
+      return
 
-  runtime = pod_info.get("runtime", {})
-  ports = runtime.get("ports", [])
-  ssh_port = None
-  ssh_host = None
+    # Wait for the pod to boot up
+    print("⏳ Waiting for pod to initialize...")
+    while True:
+      try:
+        pod_info = runpod.get_pod(pod["id"])
+        if pod_info.get("runtime") and pod_info["runtime"].get("gpus"):
+          break
+      except Exception as e:
+        print(f"⚠️ Error polling pod status: {e}")
+      time.sleep(5)
 
-  for p in ports:
-    if p.get("privatePort") == 22:
-      ssh_port = p.get("isExternal")
-      ssh_host = p.get("address")
-      break
+    runtime = pod_info.get("runtime", {})
+    ports = runtime.get("ports", [])
+    ssh_port = None
+    ssh_host = None
 
-  if not ssh_host:
-    ssh_host = pod_info.get("ipAddress") or pod_info.get("address")
+    for p in ports:
+      if p.get("privatePort") == 22:
+        ssh_port = p.get("isExternal")
+        ssh_host = p.get("address")
+        break
 
-  if not ssh_host:
-    ssh_host = "your-runpod-proxy-endpoint.runpod.net"
+    if not ssh_host:
+      ssh_host = pod_info.get("ipAddress") or pod_info.get("address")
 
-  if not ssh_port:
+    if not ssh_host:
+      ssh_host = "your-runpod-proxy-endpoint.runpod.net"
+
+    if not ssh_port:
+      try:
+        ssh_port = runtime["ports"]["isExternal"]
+      except (KeyError, TypeError):
+        ssh_port = "unknown"
+
+    print(f"\n✅ Pod is ready! Connect via SSH:")
+    print(f"ssh -p {ssh_port} root@{ssh_host}")
+
+  elif args.command == "list":
+    print("Listing your RunPod instances...")
     try:
-      ssh_port = runtime["ports"]["isExternal"]
-    except (KeyError, TypeError):
-      ssh_port = "unknown"
+      pods = runpod.get_pods()
+    except Exception as e:
+      print(f"❌ Failed to retrieve pods: {e}")
+      return
 
-  print(f"\n✅ Pod is ready! Connect via SSH:")
-  print(f"ssh -p {ssh_port} root@{ssh_host}")
+    if not pods:
+      print("No pods found.")
+      return
+
+    # Print a nice table
+    print(f"{'POD ID':<20} | {'NAME':<25} | {'STATUS':<12} | {'GPU TYPE':<22} | {'SSH ENDPOINT'}")
+    print("-" * 100)
+    for p in pods:
+      pod_id = p.get("id", "N/A")
+      name = p.get("name", "N/A")
+      status = p.get("desiredStatus") or p.get("status", "N/A")
+
+      # Extract GPU info
+      gpu_type = p.get("gpuName") or p.get("gpuTypeId") or "CPU"
+      gpu_count = p.get("gpuCount", 0)
+      if gpu_count > 0:
+        gpu_display = f"{gpu_count}x {gpu_type}"
+      else:
+        gpu_display = "CPU only"
+
+      # Extract SSH endpoint
+      runtime = p.get("runtime", {})
+      ports = runtime.get("ports", []) if runtime else []
+      ssh_endpoint = "N/A"
+      for port_entry in ports:
+        if port_entry.get("privatePort") == 22:
+          ssh_endpoint = f"{port_entry.get('address')}:{port_entry.get('isExternal')}"
+          break
+
+      print(f"{pod_id:<20} | {name:<25} | {status:<12} | {gpu_display:<22} | {ssh_endpoint}")
+
+  elif args.command == "stop":
+    print(f"Stopping pod '{args.pod_id}'...")
+    try:
+      runpod.stop_pod(args.pod_id)
+      print(f"✅ Stop request sent for pod '{args.pod_id}'.")
+    except Exception as e:
+      print(f"❌ Failed to stop pod: {e}")
+
+  elif args.command == "terminate":
+    print(f"Terminating pod '{args.pod_id}'...")
+    try:
+      runpod.terminate_pod(args.pod_id)
+      print(f"✅ Termination request sent for pod '{args.pod_id}'.")
+    except Exception as e:
+      print(f"❌ Failed to terminate pod: {e}")
 
 
 if __name__ == "__main__":

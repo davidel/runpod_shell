@@ -1,14 +1,14 @@
 # RunPod Deploy CLI
 
-A Python command-line interface to easily create, configure, and launch RunPod instances with persistent network volumes, customized container environments, and automatic SSH setup.
+A Python command-line interface to manage RunPod instances (create, list, stop, and terminate pods) with optional persistent network volumes, customized container environments, and automatic SSH setup.
 
 ## Features
 
-- **Argparse CLI Support**: Configure image, volume, GPU type, ports, environment variables, and packages via command-line arguments.
+- **Docker-like Subcommands**: Simple interface to `create`, `list`, `stop`, and `terminate` pods.
 - **Smart SSH Key Auto-Detection**: Searches for standard SSH public keys (`id_rsa.pub`, `id_ed25519.pub`, `id_ecdsa.pub`, `id_dsa.pub`) in your local `~/.ssh/` directory automatically.
-- **Smart python packages installation**: Reads a local `requirements.txt` file (or custom path) and automatically sets up a python virtual environment (`venv`) on your persistent network volume.
-- **Container Customization**: Installs custom apt packages and sets environment variables in the container.
-- **Boot Status Polling**: Waits for the instance to initialize and prints the exact command needed to connect via SSH.
+- **Python Virtual Environments**: Resolves packages from `requirements.txt` (or custom path) and `--pip-packages` (CLI) and installs them in a persistent virtual environment (`/workspace/venv`).
+- **Container Customization**: Merges CLI and file-based apt packages (via `--apt-packages` and `--apt-packages-file`) and loads credentials from a `.env` file (via `--env-file`).
+- **Real SSH Address Output**: Resolves the exact host IP and external port from RunPod to print a ready-to-use SSH connection string.
 
 ---
 
@@ -25,82 +25,90 @@ A Python command-line interface to easily create, configure, and launch RunPod i
    export RUNPOD_API_KEY="your_runpod_api_key"
    ```
 
-3. **SSH Public Key**:
-   Ensure you have an SSH public key generated locally at `~/.ssh/id_rsa.pub` or another standard name, or pass one manually using the `--ssh-key-path` flag.
+---
+
+## Command Reference
+
+### Global Option
+Every subcommand supports passing the API key directly:
+*   `--api-key`: RunPod API key (or uses the local `RUNPOD_API_KEY` env var).
 
 ---
 
-## Usage
-
-Run the script using python:
+### 1. `create`
+Launches and configures a new RunPod instance.
 
 ```bash
-python3 cli.py [OPTIONS]
+python3 cli.py create [OPTIONS]
 ```
-
-### Options
 
 | Flag | Default | Description |
 |---|---|---|
-| `--api-key` | *None* | RunPod API key (or use `RUNPOD_API_KEY` env var) |
 | `--name` | `persistent-worker` | Name of the RunPod instance |
 | `--volume-id` | *None* | Persistent Network Volume ID to mount |
 | `--image-name` | `runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404` | Base image for the container |
 | `--gpu-type` | `NVIDIA GeForce RTX 4090` | GPU type ID to provision |
+| `--gpu-count` | `1` | Number of GPUs to allocate |
 | `--volume-size` | `50` | Container disk size in GB |
 | `--ssh-key-path` | *None* | Path to public key (checks default paths if omitted) |
 | `--requirements-path` | *None* | Path to `requirements.txt` file |
-| `--pip-packages` | *None* | Extra Python packages to install in the virtual environment |
-| `--apt-packages` | `screen`, `curl`, `htop`, `ffmpeg`, `git` | Additional packages to install |
+| `--pip-packages` | *None* | Extra Python packages to install |
+| `--apt-packages` | *None* | Extra apt packages to install (default: `screen curl htop ffmpeg git`) |
 | `--apt-packages-file` | *None* | Path to a file containing extra apt packages to install |
 | `--env` | *None* | Environment variables (e.g. `KEY=VALUE`) |
 | `--env-file` | *None* | Path to a `.env` file containing environment variables |
 | `--ports` | `22/tcp` | Container ports to expose |
 | `--cloud-type` | `SECURE` | Type of cloud network (`SECURE`, `COMMUNITY`, or `ALL`) |
-| `--gpu-count` | `1` | Number of GPUs to allocate |
 | `--container-disk-size` | `30` | Container local disk size in GB |
 | `--volume-mount-path` | `/workspace` | Path inside container where the network volume is mounted |
 
 ---
 
+### 2. `list`
+Lists all active and stopped pods associated with your account, showing Pod ID, Name, Status, GPU type, and connection endpoint.
+
+```bash
+python3 cli.py list
+```
+
+---
+
+### 3. `stop`
+Stops a running pod (releases GPU resources, but retains the data on the persistent network volume).
+
+```bash
+python3 cli.py stop <pod-id>
+```
+
+---
+
+### 4. `terminate`
+Deletes a pod and releases all associated resources.
+
+```bash
+python3 cli.py terminate <pod-id>
+```
+
+---
+
 ## Examples
 
-### 1. Simple Launch
-Launches a PyTorch container with default settings and your default SSH key:
+### Launch with default settings
 ```bash
-python3 cli.py
+python3 cli.py create
 ```
 
-### 2. Attach a Network Volume and Install Requirements
-Mounts your persistent storage volume `vol-abc123xyz` and installs packages from `requirements.txt` into a persistent virtual environment (`/workspace/venv`):
+### Launch attaching a Network Volume and Python requirements
 ```bash
-python3 cli.py --volume-id "vol-abc123xyz" --requirements-path requirements.txt
+python3 cli.py create --volume-id "vol-abc123xyz" --requirements-path requirements.txt
 ```
 
-### 3. Fully Customized Environment
-Specify a custom image, GPU, extra apt packages, and environment variables:
+### Fully customized creation
 ```bash
-python3 cli.py \
+python3 cli.py create \
   --image-name "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-ubuntu22.04" \
   --gpu-type "NVIDIA RTX A6000" \
-  --apt-packages screen git wget htop \
-  --env CLOUDFLARE_API_KEY="your_cloudflare_key" MY_CUSTOM_VAR="hello"
-```
-
-### 4. Deploy using an Environment File
-Load credentials (e.g. Cloudflare and GCS keys) from a local `.env` file and override or augment them via command line options:
-```bash
-python3 cli.py --env-file secrets.env --env RUN_ID="run_42"
-```
-
-### 5. Deploy using an Apt Packages File
-Specify a file containing one package per line to install:
-```bash
-python3 cli.py --apt-packages-file apt-packages.txt
-```
-
-### 6. Install Python Packages via CLI
-Install specific packages into the virtual environment on top of what is in your requirements file:
-```bash
-python3 cli.py --requirements-path requirements.txt --pip-packages torchinfo matplotlib
+  --gpu-count 2 \
+  --env-file secrets.env \
+  --pip-packages torchinfo matplotlib
 ```
