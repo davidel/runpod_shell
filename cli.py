@@ -33,7 +33,7 @@ def get_ssh_key(key_path_str=None):
   if key_path_str:
     key_path = Path(key_path_str).expanduser()
     if not key_path.exists():
-      raise FileNotFoundError(f"SSH key not found at {key_path}")
+      fatal(f"SSH key not found at {key_path}", FileNotFoundError)
     return read_ssh_key(key_path)
 
   # Check default paths in ~/.ssh
@@ -45,8 +45,9 @@ def get_ssh_key(key_path_str=None):
         print(f"🔑 Using default SSH key: {key_path}")
         return read_ssh_key(key_path)
 
-  raise FileNotFoundError(
-      "No SSH key path provided and no default key (id_rsa.pub, id_ed25519.pub, id_ecdsa.pub, id_dsa.pub) found in ~/.ssh/"
+  fatal(
+      "No SSH key path provided and no default key (id_rsa.pub, id_ed25519.pub, id_ecdsa.pub, id_dsa.pub) found in ~/.ssh/",
+      FileNotFoundError
   )
 
 
@@ -58,7 +59,7 @@ def read_requirements(req_path_str=None):
   else:
     req_path = Path(req_path_str).expanduser()
     if not req_path.exists():
-      raise FileNotFoundError(f"Requirements file not found at {req_path}")
+      fatal(f"Requirements file not found at {req_path}", FileNotFoundError)
 
   with open(req_path, 'r') as f:
     return f.read()
@@ -67,7 +68,7 @@ def read_requirements(req_path_str=None):
 def parse_env_file(file_path_str):
   file_path = Path(file_path_str).expanduser()
   if not file_path.exists():
-    raise FileNotFoundError(f"Environment file not found at {file_path}")
+    fatal(f"Environment file not found at {file_path}", FileNotFoundError)
 
   env_dict = {}
   with open(file_path, "r") as f:
@@ -87,7 +88,7 @@ def parse_env_file(file_path_str):
 def read_apt_packages_file(file_path_str):
   file_path = Path(file_path_str).expanduser()
   if not file_path.exists():
-    raise FileNotFoundError(f"Apt packages file not found at {file_path}")
+    fatal(f"Apt packages file not found at {file_path}", FileNotFoundError)
 
   packages = []
   with open(file_path, "r") as f:
