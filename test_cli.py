@@ -123,6 +123,41 @@ class TestRunPodDeployCLI(unittest.TestCase):
       cli.fatal("An error occurred", exc=ValueError)
     mock_stderr.write.assert_any_call("An error occurred")
 
+  @patch("runpod.get_gpus")
+  def test_get_valid_gpus(self, mock_get_gpus):
+    mock_get_gpus.return_value = [
+        {"id": "NVIDIA GeForce RTX 4090", "displayName": "RTX 4090"},
+        {"id": "NVIDIA RTX A6000", "displayName": "RTX A6000"}
+    ]
+    gpus = cli.get_valid_gpus()
+    self.assertEqual(gpus, ["NVIDIA GeForce RTX 4090", "NVIDIA RTX A6000"])
+
+  def test_resolve_gpu_type(self):
+    valid = ["NVIDIA GeForce RTX 4090", "NVIDIA RTX A6000"]
+    # Exact match
+    self.assertEqual(cli.resolve_gpu_type("NVIDIA GeForce RTX 4090", valid), "NVIDIA GeForce RTX 4090")
+    # Case-insensitive
+    self.assertEqual(cli.resolve_gpu_type("nvidia geforce rtx 4090", valid), "NVIDIA GeForce RTX 4090")
+    # Substring match (unique)
+    self.assertEqual(cli.resolve_gpu_type("4090", valid), "NVIDIA GeForce RTX 4090")
+    # Substring match (ambiguous)
+    with self.assertRaises(ValueError):
+      cli.resolve_gpu_type("RTX", valid)
+    # Not found / Fuzzy match close suggestions
+    with self.assertRaises(ValueError):
+      cli.resolve_gpu_type("NVIDA 4090", valid)
+
+  @patch("runpod.get_gpus")
+  @patch("sys.stdout")
+  def test_gpus_command(self, mock_stdout, mock_get_gpus):
+    mock_get_gpus.return_value = [
+        {"id": "RTX 4090", "displayName": "RTX 4090", "memoryInGb": 24}
+    ]
+    test_args = ["cli.py", "gpus"]
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+    mock_stdout.write.assert_any_call("RTX 4090                       | RTX 4090                  | 24        ")
+
 
 if __name__ == "__main__":
   unittest.main()

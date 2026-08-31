@@ -4,7 +4,8 @@ A Python command-line interface to manage RunPod instances (create, list, stop, 
 
 ## Features
 
-- **Docker-like Subcommands**: Simple interface to `create`, `list`, `stop`, and `terminate` pods.
+- **Docker-like Subcommands**: Simple interface to `create`, `list`, `stop`, `terminate`, and list `gpus`.
+- **GPU Querying & Resolution**: List all available GPU types using the `gpus` subcommand, and use case-insensitive, unique substring, or fuzzy matching auto-resolution for `--gpu-type` values (e.g. `4090` auto-resolves to `NVIDIA GeForce RTX 4090`).
 - **Smart SSH Key Auto-Detection**: Searches for standard SSH public keys (`id_rsa.pub`, `id_ed25519.pub`, `id_ecdsa.pub`, `id_dsa.pub`) in your local `~/.ssh/` directory automatically.
 - **Python Virtual Environments**: Resolves packages from `requirements.txt` (or custom path) and `--pip-packages` (CLI) and installs them in a persistent virtual environment (`/workspace/venv`).
 - **Container Customization**: Merges CLI and file-based apt packages (via `--apt-packages` and `--apt-packages-file`) and loads credentials from a `.env` file (via `--env-file`).
@@ -47,7 +48,7 @@ python3 cli.py create [OPTIONS]
 | `--name` | `persistent-worker` | Name of the RunPod instance |
 | `--volume-id` | *None* | Persistent Network Volume ID to mount |
 | `--image-name` | `runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404` | Base image for the container |
-| `--gpu-type` | `NVIDIA GeForce RTX 4090` | GPU type ID to provision |
+| `--gpu-type` | `NVIDIA GeForce RTX 4090` | GPU type ID to provision (supports case-insensitive, unique substring, and fuzzy matching, e.g. `4090`) |
 | `--gpu-count` | `1` | Number of GPUs to allocate |
 | `--volume-size` | `50` | Container disk size in GB |
 | `--ssh-key-path` | *None* | Path to public key (checks default paths if omitted) |
@@ -87,6 +88,15 @@ Deletes a pod and releases all associated resources.
 
 ```bash
 python3 cli.py terminate <pod-id>
+```
+
+---
+
+### 5. `gpus`
+Retrieves and lists all available GPU models, their display names, and VRAM sizes currently supported on RunPod.
+
+```bash
+python3 cli.py gpus
 ```
 
 ---

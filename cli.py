@@ -1,4 +1,5 @@
 import argparse
+import difflib
 import os
 from pathlib import Path
 import sys
@@ -142,6 +143,51 @@ fi"""
   return f"{apt_install_cmd} && {setup_requirements}"
 
 
+def get_valid_gpus():
+  try:
+    gpus = runpod.get_gpus()
+    return [g.get("id") for g in gpus if g.get("id")]
+  except Exception:
+    return None
+
+
+def resolve_gpu_type(user_input, valid_gpus):
+  if not valid_gpus:
+    return user_input
+
+  # 1. Exact match
+  if user_input in valid_gpus:
+    return user_input
+
+  # 2. Case-insensitive match
+  user_lower = user_input.lower()
+  for gpu in valid_gpus:
+    if gpu.lower() == user_lower:
+      return gpu
+
+  # 3. Substring match
+  matches = []
+  for gpu in valid_gpus:
+    if user_lower in gpu.lower():
+      matches.append(gpu)
+
+  if len(matches) == 1:
+    print(f"🎯 Auto-resolved GPU type '{user_input}' to '{matches[0]}'")
+    return matches[0]
+  elif len(matches) > 1:
+    options_str = ", ".join(f"'{m}'" for m in matches)
+    fatal(f"❌ GPU type '{user_input}' is ambiguous. Did you mean one of: {options_str}?", ValueError)
+
+  # 4. Fuzzy match
+  close_matches = difflib.get_close_matches(user_input, valid_gpus, n=3, cutoff=0.4)
+  if close_matches:
+    options_str = ", ".join(f"'{m}'" for m in close_matches)
+    fatal(f"❌ GPU type '{user_input}' not found. Did you mean: {options_str}?", ValueError)
+
+  # Fallback
+  fatal(f"❌ GPU type '{user_input}' not found and no close matches detected.", ValueError)
+
+
 def main():
   parser = argparse.ArgumentParser(
       description="Manage RunPod instances with optional persistent volume and custom environment setup."
@@ -261,6 +307,9 @@ def main():
   terminate_parser = subparsers.add_parser("terminate", help="Terminate (delete) a RunPod instance")
   terminate_parser.add_argument("pod_id", help="The ID of the pod to terminate")
 
+  # Gpus Command
+  subparsers.add_parser("gpus", help="List all available GPU types and details on RunPod")
+
   args = parser.parse_args()
 
   # Set API Key
@@ -275,6 +324,10 @@ def main():
     )
 
   if args.command == "create":
+    # Resolve and validate GPU type
+    valid_gpus = get_valid_gpus()
+    gpu_type = resolve_gpu_type(args.gpu_type, valid_gpus)
+
     # Load SSH public key
     try:
       ssh_public_key = get_ssh_key(args.ssh_key_path)
@@ -326,7 +379,7 @@ def main():
     create_args = {
         "name": args.name,
         "image_name": args.image_name,
-        "gpu_type_id": args.gpu_type,
+        "gpu_type_id": gpu_type,
         "gpu_count": args.gpu_count,
         "container_disk_in_gb": args.container_disk_size,
         "volume_in_gb": args.volume_size,
@@ -435,6 +488,25 @@ def main():
       print(f"✅ Termination request sent for pod '{args.pod_id}'.")
     except Exception as e:
       fatal(f"❌ Failed to terminate pod: {e}", exc=e.__class__)
+
+  elif args.command == "gpus":
+    print("Fetching available GPU types...")
+    try:
+      gpus = runpod.get_gpus()
+    except Exception as e:
+      fatal(f"❌ Failed to retrieve GPUs: {e}", exc=e.__class__)
+
+    if not gpus:
+      print("No GPUs found.")
+      return
+
+    print(f"{'GPU ID':<30} | {'DISPLAY NAME':<25} | {'RAM (GB)':<10}")
+    print("-" * 75)
+    for g in gpus:
+      gpu_id = g.get("id", "N/A")
+      display_name = g.get("displayName", "N/A")
+      ram = g.get("memoryInGb", "N/A")
+      print(f"{gpu_id:<30} | {display_name:<25} | {ram:<10}")
 
 
 if __name__ == "__main__":
