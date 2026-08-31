@@ -95,6 +95,46 @@ def read_apt_packages_file(file_path_str):
   return packages
 
 
+def build_container_setup_script(apt_packages, requirements_content, pip_packages, volume_mount_path):
+  # Build apt install command
+  apt_packages_str = " ".join(apt_packages)
+  apt_install_cmd = f"apt-get update && apt-get install -y {apt_packages_str}" if apt_packages else "true"
+
+  # Build python venv setup script
+  escaped_requirements = requirements_content.replace("'", "'\\''")
+  write_requirements = f"echo '{escaped_requirements}' > {volume_mount_path}/requirements.txt" if requirements_content.strip() else "true"
+  pip_packages_str = " ".join(pip_packages) if pip_packages else ""
+
+  if requirements_content.strip() or pip_packages_str:
+    venv_dir = f"{volume_mount_path}/venv"
+    sentinel = f"{venv_dir}/.setup_complete"
+    install_pip_packages = f"{venv_dir}/bin/pip install {pip_packages_str}" if pip_packages_str else "true"
+
+    setup_requirements = f"""{write_requirements} && \\
+if [ -d "{venv_dir}" ] && [ ! -f "{sentinel}" ]; then \\
+    echo "⚠️ Found incomplete or broken virtual environment. Cleaning up..."; \\
+    rm -rf "{venv_dir}"; \\
+fi && \\
+if [ ! -d "{venv_dir}" ]; then \\
+    echo "📦 Creating fresh venv on Network Volume..."; \\
+    python3 -m venv "{venv_dir}" && \\
+    "{venv_dir}/bin/pip" install --upgrade pip && \\
+    if [ -f "{volume_mount_path}/requirements.txt" ]; then "{venv_dir}/bin/pip" install -r "{volume_mount_path}/requirements.txt"; fi && \\
+    {install_pip_packages} && \\
+    touch "{sentinel}"; \\
+else \\
+    echo "✅ Found healthy virtual environment."; \\
+    if [ "{pip_packages_str}" != "" ]; then \\
+        echo "Installing command-line pip packages..."; \\
+        {install_pip_packages}; \\
+    fi \\
+fi"""
+  else:
+    setup_requirements = "true"
+
+  return f"{apt_install_cmd} && {setup_requirements}"
+
+
 def main():
   parser = argparse.ArgumentParser(
       description="Manage RunPod instances with optional persistent volume and custom environment setup."
@@ -254,33 +294,12 @@ def main():
       apt_packages = ["screen", "curl", "htop", "ffmpeg", "git"]
 
     # Build container disk setup script
-    apt_packages_str = " ".join(apt_packages)
-    apt_install_cmd = f"apt-get update && apt-get install -y {apt_packages_str}" if apt_packages else "true"
-
-    escaped_requirements = requirements_content.replace("'", "'\\''")
-    write_requirements = f"echo '{escaped_requirements}' > /workspace/requirements.txt" if requirements_content.strip() else "true"
-    pip_packages_str = " ".join(args.pip_packages) if args.pip_packages else ""
-
-    if requirements_content.strip() or pip_packages_str:
-      install_pip_packages = f"/workspace/venv/bin/pip install {pip_packages_str}" if pip_packages_str else "true"
-      setup_requirements = f"""{write_requirements} && \\
-if [ ! -d "/workspace/venv" ]; then \\
-    echo "📦 Creating fresh venv on Network Volume..."; \\
-    python3 -m venv /workspace/venv && \\
-    /workspace/venv/bin/pip install --upgrade pip && \\
-    if [ -f "/workspace/requirements.txt" ]; then /workspace/venv/bin/pip install -r /workspace/requirements.txt; fi && \\
-    {install_pip_packages}; \\
-else \\
-    echo "✅ Found existing venv on Network Volume."; \\
-    if [ "{pip_packages_str}" != "" ]; then \\
-        echo "Installing command-line pip packages..."; \\
-        {install_pip_packages}; \\
-    fi \\
-fi"""
-    else:
-      setup_requirements = "true"
-
-    container_disk_setup = f"{apt_install_cmd} && {setup_requirements}"
+    container_disk_setup = build_container_setup_script(
+        apt_packages=apt_packages,
+        requirements_content=requirements_content,
+        pip_packages=args.pip_packages,
+        volume_mount_path=args.volume_mount_path
+    )
 
     # Load env file if provided
     env_file_vars = {}
