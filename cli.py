@@ -257,7 +257,8 @@ def main():
     apt_packages_str = " ".join(apt_packages)
     apt_install_cmd = f"apt-get update && apt-get install -y {apt_packages_str}" if apt_packages else "true"
 
-    write_requirements = f"echo '{requirements_content}' > /workspace/requirements.txt" if requirements_content.strip() else "true"
+    escaped_requirements = requirements_content.replace("'", "'\\''")
+    write_requirements = f"echo '{escaped_requirements}' > /workspace/requirements.txt" if requirements_content.strip() else "true"
     pip_packages_str = " ".join(args.pip_packages) if args.pip_packages else ""
 
     if requirements_content.strip() or pip_packages_str:
