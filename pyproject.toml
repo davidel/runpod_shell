@@ -7,7 +7,8 @@ name = "runpod-deploy"
 version = "0.1.0"
 description = "A Python command-line interface to manage RunPod instances"
 readme = "README.md"
-license = {file = "LICENSE"}
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.8"
 classifiers = [
     "Programming Language :: Python :: 3",
