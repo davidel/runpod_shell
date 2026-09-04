@@ -206,6 +206,183 @@ class TestRunPodDeployCLI(unittest.TestCase):
       cli.main()
     mock_stdout.write.assert_any_call("RTX 4090                       | RTX 4090                  | 24        | N/A        | N/A | N/A     | N/A      ")
 
+  @patch("runpod_deploy.cli.execute_remote_script")
+  @patch("runpod_deploy.cli.find_ssh_private_key")
+  @patch("runpod_deploy.cli.get_ssh_key")
+  @patch("runpod_deploy.cli.read_requirements")
+  @patch("runpod_deploy.cli.read_apt_packages_file")
+  @patch("runpod.create_pod")
+  @patch("runpod.get_pod")
+  @patch("time.sleep")
+  def test_create_with_run_script(self, mock_sleep, mock_get_pod, mock_create_pod, mock_apt_file, mock_req, mock_ssh_key, mock_find_priv, mock_exec):
+    mock_ssh_key.return_value = "ssh-rsa fake_public_key"
+    mock_req.return_value = ""
+    mock_apt_file.return_value = []
+    mock_create_pod.return_value = {"id": "pod-123"}
+    mock_get_pod.return_value = {
+        "id": "pod-123",
+        "desiredStatus": "RUNNING",
+        "runtime": {
+            "gpus": True,
+            "ports": [{"privatePort": 22, "isExternal": 12345, "address": "12.34.56.78"}]
+        }
+    }
+    mock_find_priv.return_value = Path("/fake/priv_key")
+    mock_exec.return_value = {"job_id": "job-1", "pid": "123", "exit_code": 0}
+
+    test_args = [
+        "cli.py",
+        "--api-key", "fake-api-key",
+        "create",
+        "--name", "test-worker",
+        "--run-script", "script.sh",
+        "--script-args", "--flag 1"
+    ]
+
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+
+    mock_exec.assert_called_once_with(
+        host="12.34.56.78",
+        port=12345,
+        script_path="script.sh",
+        script_args="--flag 1",
+        detach=False,
+        private_key_path=Path("/fake/priv_key"),
+        wait_for_setup_flag=True,
+        ssh_timeout=180
+    )
+
+  @patch("runpod_deploy.cli.execute_remote_script")
+  @patch("runpod.get_pod")
+  def test_exec_command(self, mock_get_pod, mock_exec):
+    mock_get_pod.return_value = {
+        "id": "pod-123",
+        "runtime": {
+            "ports": [{"privatePort": 22, "isExternal": 12345, "address": "12.34.56.78"}]
+        }
+    }
+    mock_exec.return_value = {"job_id": "job-1", "pid": "123", "exit_code": 0}
+
+    test_args = [
+        "cli.py",
+        "--api-key", "fake-api-key",
+        "exec",
+        "pod-123",
+        "script.sh",
+        "--script-args", "arg1 arg2",
+        "--detach"
+    ]
+
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+
+    mock_exec.assert_called_once_with(
+        host="12.34.56.78",
+        port=12345,
+        script_path="script.sh",
+        script_args="arg1 arg2",
+        detach=True,
+        private_key_path=None,
+        wait_for_setup_flag=True,
+        ssh_timeout=180
+    )
+
+  @patch("runpod_deploy.cli.list_remote_jobs")
+  @patch("runpod.get_pod")
+  @patch("sys.stdout")
+  def test_ps_command(self, mock_stdout, mock_get_pod, mock_list_jobs):
+    mock_get_pod.return_value = {
+        "id": "pod-123",
+        "runtime": {
+            "ports": [{"privatePort": 22, "isExternal": 12345, "address": "12.34.56.78"}]
+        }
+    }
+    mock_list_jobs.return_value = [
+        {
+            "job_id": "job-1",
+            "pid": 1234,
+            "status": "RUNNING",
+            "started_at_iso": "2026-09-04T12:00:00Z",
+            "duration": "5m 0s",
+            "script": "train.py",
+            "log_file": "/workspace/logs/job-1.log"
+        }
+    ]
+
+    test_args = [
+        "cli.py",
+        "--api-key", "fake-api-key",
+        "ps",
+        "pod-123"
+    ]
+
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+
+    mock_list_jobs.assert_called_once_with("12.34.56.78", 12345, private_key_path=None)
+
+  @patch("runpod_deploy.cli.view_remote_logs")
+  @patch("runpod.get_pod")
+  def test_logs_command(self, mock_get_pod, mock_view_logs):
+    mock_get_pod.return_value = {
+        "id": "pod-123",
+        "runtime": {
+            "ports": [{"privatePort": 22, "isExternal": 12345, "address": "12.34.56.78"}]
+        }
+    }
+
+    test_args = [
+        "cli.py",
+        "--api-key", "fake-api-key",
+        "logs",
+        "pod-123",
+        "job-1",
+        "-f"
+    ]
+
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+
+    mock_view_logs.assert_called_once_with(
+        host="12.34.56.78",
+        port=12345,
+        job_id="job-1",
+        tail_lines=None,
+        follow=True,
+        private_key_path=None
+    )
+
+  @patch("runpod_deploy.cli.kill_remote_job")
+  @patch("runpod.get_pod")
+  def test_kill_command(self, mock_get_pod, mock_kill):
+    mock_get_pod.return_value = {
+        "id": "pod-123",
+        "runtime": {
+            "ports": [{"privatePort": 22, "isExternal": 12345, "address": "12.34.56.78"}]
+        }
+    }
+
+    test_args = [
+        "cli.py",
+        "--api-key", "fake-api-key",
+        "kill",
+        "pod-123",
+        "job-1",
+        "-s", "SIGKILL"
+    ]
+
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+
+    mock_kill.assert_called_once_with(
+        host="12.34.56.78",
+        port=12345,
+        target_id="job-1",
+        signal_name="SIGKILL",
+        private_key_path=None
+    )
+
 
 if __name__ == "__main__":
   unittest.main()

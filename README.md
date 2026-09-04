@@ -64,6 +64,12 @@ python3 cli.py create [OPTIONS]
 | `--volume-mount-path` | `/workspace` | Path inside container where the network volume is mounted |
 | `--vcpu-count` | `4` | Minimum number of vCPUs to allocate |
 | `--memory` | `8` | Minimum CPU RAM in GB to allocate |
+| `--run-script` | *None* | Path to a local script to execute on the pod via SSH once initialized |
+| `--script-args` | `""` | String arguments to pass to the script |
+| `-d`, `--detach` | `False` | Run script in background without waiting / streaming |
+| `--ssh-private-key-path` | *None* | Path to private SSH key (auto-detected if omitted) |
+| `--no-wait-for-setup` | `False` | Do not wait for container disk setup to complete before executing script |
+| `--ssh-timeout` | `180` | Max seconds to wait for SSH and setup readiness |
 
 ---
 
@@ -103,6 +109,57 @@ python3 cli.py gpus
 
 ---
 
+### 6. `exec`
+Uploads and executes an arbitrary local script on an active pod via SSH. Supports foreground streaming or detached background execution.
+
+```bash
+python3 cli.py exec <pod-id> <script-path> [OPTIONS]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--script-args` | `""` | String arguments to pass to the script |
+| `-d`, `--detach` | `False` | Run script in background without waiting / streaming |
+| `--ssh-private-key-path` | *None* | Path to private SSH key (auto-detected if omitted) |
+| `--no-wait-for-setup` | `False` | Do not wait for container disk setup to complete |
+| `--ssh-timeout` | `180` | Max seconds to wait for SSH and setup readiness |
+
+---
+
+### 7. `ps`
+Lists remote processes and background jobs managed by `runpod-deploy` on the pod, including Job ID, PID, running/completed/failed status, start time, duration, and log file path.
+
+```bash
+python3 cli.py ps <pod-id>
+```
+
+---
+
+### 8. `logs`
+Inspects remote execution logs with full display (`cat`), tailing the last N lines, or live streaming (`-f`).
+
+```bash
+# Display entire log (cat)
+python3 cli.py logs <pod-id> [job-id]
+
+# Show last 100 lines
+python3 cli.py logs <pod-id> [job-id] -n 100
+
+# Live follow log output (tail -f)
+python3 cli.py logs <pod-id> [job-id] -f
+```
+
+---
+
+### 9. `kill`
+Terminates a remote job and its entire process group using a signal (defaults to `SIGTERM`).
+
+```bash
+python3 cli.py kill <pod-id> <job-id-or-pid> [--signal SIGKILL]
+```
+
+---
+
 ## Examples
 
 ### Launch with default settings
@@ -113,6 +170,30 @@ python3 cli.py create
 ### Launch attaching a Network Volume and Python requirements
 ```bash
 python3 cli.py create --volume-id "vol-abc123xyz" --requirements-path requirements.txt
+```
+
+### Launch and automatically run a script in the background
+```bash
+python3 cli.py create \
+  --volume-id "vol-abc123xyz" \
+  --run-script ./train.py \
+  --script-args "--epochs 50 --lr 1e-4" \
+  --detach
+```
+
+### Execute a script on an existing pod and follow logs
+```bash
+# Run in background
+python3 cli.py exec pod-abc123xyz ./eval.py --script-args "--model best.pt" -d
+
+# Check process status
+python3 cli.py ps pod-abc123xyz
+
+# Follow live output
+python3 cli.py logs pod-abc123xyz -f
+
+# Terminate if needed
+python3 cli.py kill pod-abc123xyz job-1757000000-a1b2c3
 ```
 
 ### Fully customized creation

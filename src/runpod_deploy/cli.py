@@ -6,6 +6,14 @@ import sys
 import time
 import runpod
 
+from runpod_deploy.ssh_runner import (
+    find_ssh_private_key,
+    execute_remote_script,
+    list_remote_jobs,
+    view_remote_logs,
+    kill_remote_job
+)
+
 
 class ParseEnv(argparse.Action):
 
@@ -143,7 +151,8 @@ fi"""
   else:
     setup_requirements = "true"
 
-  return f"{apt_install_cmd} && {setup_requirements}"
+  sentinel_setup = f"mkdir -p {volume_mount_path} 2>/dev/null; touch {volume_mount_path}/.setup_complete || touch /tmp/.setup_complete"
+  return f"{apt_install_cmd} && {setup_requirements} && ({sentinel_setup})"
 
 
 def get_valid_gpus():
@@ -189,6 +198,28 @@ def resolve_gpu_type(user_input, valid_gpus):
 
   # Fallback
   fatal(f"GPU type '{user_input}' not found and no close matches detected.", ValueError)
+
+
+def get_pod_ssh_endpoint(pod_info):
+  runtime = pod_info.get("runtime", {}) if pod_info else {}
+  ports = runtime.get("ports", []) if runtime else []
+  ssh_port = None
+  ssh_host = None
+
+  if isinstance(ports, list):
+    for p in ports:
+      if p.get("privatePort") == 22:
+        ssh_port = p.get("isExternal")
+        ssh_host = p.get("address")
+        break
+
+  if not ssh_host and pod_info:
+    ssh_host = pod_info.get("ipAddress") or pod_info.get("address")
+
+  if not ssh_port and isinstance(ports, dict):
+    ssh_port = ports.get("isExternal")
+
+  return ssh_host, ssh_port
 
 
 def cmd_create(args):
@@ -267,31 +298,144 @@ def cmd_create(args):
       print(f"Error polling pod status: {e}")
     time.sleep(5)
 
-  runtime = pod_info.get("runtime", {})
-  ports = runtime.get("ports", [])
-  ssh_port = None
-  ssh_host = None
-
-  for p in ports:
-    if p.get("privatePort") == 22:
-      ssh_port = p.get("isExternal")
-      ssh_host = p.get("address")
-      break
-
-  if not ssh_host:
-    ssh_host = pod_info.get("ipAddress") or pod_info.get("address")
+  ssh_host, ssh_port = get_pod_ssh_endpoint(pod_info)
 
   if not ssh_host:
     ssh_host = "your-runpod-proxy-endpoint.runpod.net"
 
   if not ssh_port:
-    try:
-      ssh_port = runtime["ports"]["isExternal"]
-    except (KeyError, TypeError):
-      ssh_port = "unknown"
+    ssh_port = "unknown"
 
   print(f"\nPod is ready! Connect via SSH:")
   print(f"ssh -p {ssh_port} root@{ssh_host}")
+
+  if getattr(args, "run_script", None):
+    priv_key = find_ssh_private_key(args.ssh_key_path, getattr(args, "ssh_private_key_path", None))
+    wait_setup = not getattr(args, "no_wait_for_setup", False)
+    res = execute_remote_script(
+        host=ssh_host,
+        port=ssh_port,
+        script_path=args.run_script,
+        script_args=getattr(args, "script_args", "") or "",
+        detach=getattr(args, "detach", False),
+        private_key_path=priv_key,
+        wait_for_setup_flag=wait_setup,
+        ssh_timeout=getattr(args, "ssh_timeout", 180)
+    )
+    if not getattr(args, "detach", False) and res.get("exit_code", 0) != 0:
+      sys.exit(res["exit_code"])
+
+
+def cmd_exec(args):
+  print(f"Fetching connection details for pod '{args.pod_id}'...")
+  try:
+    pod_info = runpod.get_pod(args.pod_id)
+  except Exception as e:
+    fatal(f"Failed to fetch pod info: {e}", exc=e.__class__)
+
+  if not pod_info:
+    fatal(f"Pod '{args.pod_id}' not found.", FileNotFoundError)
+
+  ssh_host, ssh_port = get_pod_ssh_endpoint(pod_info)
+  if not ssh_host or not ssh_port or ssh_port == "unknown":
+    fatal(f"Could not resolve SSH endpoint for pod '{args.pod_id}'. Is the pod running and exposing port 22?")
+
+  priv_key = find_ssh_private_key(None, getattr(args, "ssh_private_key_path", None))
+  wait_setup = not getattr(args, "no_wait_for_setup", False)
+
+  res = execute_remote_script(
+      host=ssh_host,
+      port=ssh_port,
+      script_path=args.script,
+      script_args=getattr(args, "script_args", "") or "",
+      detach=getattr(args, "detach", False),
+      private_key_path=priv_key,
+      wait_for_setup_flag=wait_setup,
+      ssh_timeout=getattr(args, "ssh_timeout", 180)
+  )
+  if not getattr(args, "detach", False) and res.get("exit_code", 0) != 0:
+    sys.exit(res["exit_code"])
+
+
+def cmd_ps(args):
+  print(f"Checking processes on pod '{args.pod_id}'...")
+  try:
+    pod_info = runpod.get_pod(args.pod_id)
+  except Exception as e:
+    fatal(f"Failed to fetch pod info: {e}", exc=e.__class__)
+
+  if not pod_info:
+    fatal(f"Pod '{args.pod_id}' not found.", FileNotFoundError)
+
+  ssh_host, ssh_port = get_pod_ssh_endpoint(pod_info)
+  if not ssh_host or not ssh_port or ssh_port == "unknown":
+    fatal(f"Could not resolve SSH endpoint for pod '{args.pod_id}'.")
+
+  priv_key = find_ssh_private_key(None, getattr(args, "ssh_private_key_path", None))
+  jobs = list_remote_jobs(ssh_host, ssh_port, private_key_path=priv_key)
+
+  if not jobs:
+    print(f"No managed jobs found on pod '{args.pod_id}'.")
+    return
+
+  print(f"{'JOB ID':<26} | {'PID':<8} | {'STATUS':<12} | {'STARTED':<20} | {'DURATION':<10} | {'SCRIPT':<18} | {'LOG FILE'}")
+  print("-" * 120)
+  for j in jobs:
+    jid = j.get("job_id", "N/A")
+    pid = str(j.get("pid", "N/A"))
+    status = j.get("status", "N/A")
+    started = j.get("started_at_iso", "N/A")
+    dur = j.get("duration", "N/A")
+    script = j.get("script", "N/A")
+    log_f = j.get("log_file", "N/A")
+    print(f"{jid:<26} | {pid:<8} | {status:<12} | {started:<20} | {dur:<10} | {script:<18} | {log_f}")
+
+
+def cmd_logs(args):
+  try:
+    pod_info = runpod.get_pod(args.pod_id)
+  except Exception as e:
+    fatal(f"Failed to fetch pod info: {e}", exc=e.__class__)
+
+  if not pod_info:
+    fatal(f"Pod '{args.pod_id}' not found.", FileNotFoundError)
+
+  ssh_host, ssh_port = get_pod_ssh_endpoint(pod_info)
+  if not ssh_host or not ssh_port or ssh_port == "unknown":
+    fatal(f"Could not resolve SSH endpoint for pod '{args.pod_id}'.")
+
+  priv_key = find_ssh_private_key(None, getattr(args, "ssh_private_key_path", None))
+  view_remote_logs(
+      host=ssh_host,
+      port=ssh_port,
+      job_id=args.job_id,
+      tail_lines=args.tail,
+      follow=args.follow,
+      private_key_path=priv_key
+  )
+
+
+def cmd_kill(args):
+  try:
+    pod_info = runpod.get_pod(args.pod_id)
+  except Exception as e:
+    fatal(f"Failed to fetch pod info: {e}", exc=e.__class__)
+
+  if not pod_info:
+    fatal(f"Pod '{args.pod_id}' not found.", FileNotFoundError)
+
+  ssh_host, ssh_port = get_pod_ssh_endpoint(pod_info)
+  if not ssh_host or not ssh_port or ssh_port == "unknown":
+    fatal(f"Could not resolve SSH endpoint for pod '{args.pod_id}'.")
+
+  priv_key = find_ssh_private_key(None, getattr(args, "ssh_private_key_path", None))
+  kill_remote_job(
+      host=ssh_host,
+      port=ssh_port,
+      target_id=args.target,
+      signal_name=args.signal,
+      private_key_path=priv_key
+  )
 
 
 def cmd_list(args):
@@ -519,6 +663,129 @@ def main():
       default=8,
       help="Minimum CPU RAM in GB to allocate (default: %(default)s)"
   )
+  create_parser.add_argument(
+      "--run-script",
+      dest="run_script",
+      help="Path to a local script to execute on the pod via SSH once initialized"
+  )
+  create_parser.add_argument(
+      "--script-args",
+      dest="script_args",
+      default="",
+      help="String arguments to pass to the script"
+  )
+  create_parser.add_argument(
+      "-d",
+      "--detach",
+      dest="detach",
+      action="store_true",
+      help="Run the script in background on the pod without waiting"
+  )
+  create_parser.add_argument(
+      "--ssh-private-key-path",
+      dest="ssh_private_key_path",
+      help="Path to private SSH key (auto-detected if omitted)"
+  )
+  create_parser.add_argument(
+      "--no-wait-for-setup",
+      dest="no_wait_for_setup",
+      action="store_true",
+      help="Do not wait for container disk setup to finish before executing script"
+  )
+  create_parser.add_argument(
+      "--ssh-timeout",
+      dest="ssh_timeout",
+      type=int,
+      default=180,
+      help="Max seconds to wait for SSH and setup readiness (default: %(default)s)"
+  )
+
+  # Exec Command
+  exec_parser = subparsers.add_parser("exec", help="Execute a local script on an active RunPod instance via SSH")
+  exec_parser.add_argument("pod_id", help="The ID of the target pod")
+  exec_parser.add_argument("script", help="Path to the local script to run")
+  exec_parser.add_argument(
+      "--script-args",
+      dest="script_args",
+      default="",
+      help="String arguments to pass to the script"
+  )
+  exec_parser.add_argument(
+      "-d",
+      "--detach",
+      dest="detach",
+      action="store_true",
+      help="Run the script in background on the pod without waiting"
+  )
+  exec_parser.add_argument(
+      "--ssh-private-key-path",
+      dest="ssh_private_key_path",
+      help="Path to private SSH key (auto-detected if omitted)"
+  )
+  exec_parser.add_argument(
+      "--no-wait-for-setup",
+      dest="no_wait_for_setup",
+      action="store_true",
+      help="Do not wait for container disk setup to finish before executing script"
+  )
+  exec_parser.add_argument(
+      "--ssh-timeout",
+      dest="ssh_timeout",
+      type=int,
+      default=180,
+      help="Max seconds to wait for SSH and setup readiness (default: %(default)s)"
+  )
+
+  # Ps Command
+  ps_parser = subparsers.add_parser("ps", help="List remote processes and managed jobs on a RunPod instance")
+  ps_parser.add_argument("pod_id", help="The ID of the pod")
+  ps_parser.add_argument(
+      "--ssh-private-key-path",
+      dest="ssh_private_key_path",
+      help="Path to private SSH key (auto-detected if omitted)"
+  )
+
+  # Logs Command
+  logs_parser = subparsers.add_parser("logs", help="View remote logs of managed jobs on a RunPod instance")
+  logs_parser.add_argument("pod_id", help="The ID of the pod")
+  logs_parser.add_argument("job_id", nargs="?", default=None, help="The Job ID or PID (optional if only 1 job)")
+  logs_parser.add_argument(
+      "-n",
+      "--tail",
+      dest="tail",
+      type=int,
+      default=None,
+      help="Number of lines to display from end of log"
+  )
+  logs_parser.add_argument(
+      "-f",
+      "--follow",
+      dest="follow",
+      action="store_true",
+      help="Follow log output in real-time"
+  )
+  logs_parser.add_argument(
+      "--ssh-private-key-path",
+      dest="ssh_private_key_path",
+      help="Path to private SSH key (auto-detected if omitted)"
+  )
+
+  # Kill Command
+  kill_parser = subparsers.add_parser("kill", help="Kill a remote job or process on a RunPod instance")
+  kill_parser.add_argument("pod_id", help="The ID of the pod")
+  kill_parser.add_argument("target", help="The Job ID or PID to kill")
+  kill_parser.add_argument(
+      "-s",
+      "--signal",
+      dest="signal",
+      default="SIGTERM",
+      help="Signal to send (e.g. SIGTERM, SIGKILL; default: %(default)s)"
+  )
+  kill_parser.add_argument(
+      "--ssh-private-key-path",
+      dest="ssh_private_key_path",
+      help="Path to private SSH key (auto-detected if omitted)"
+  )
 
   # List Command
   subparsers.add_parser("list", help="List all your RunPod instances")
@@ -557,6 +824,14 @@ def main():
     cmd_terminate(args)
   elif args.command == "gpus":
     cmd_gpus(args)
+  elif args.command == "exec":
+    cmd_exec(args)
+  elif args.command == "ps":
+    cmd_ps(args)
+  elif args.command == "logs":
+    cmd_logs(args)
+  elif args.command == "kill":
+    cmd_kill(args)
 
 
 if __name__ == "__main__":
