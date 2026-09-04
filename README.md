@@ -13,11 +13,15 @@ A Python command-line interface to manage RunPod instances (create, list, stop, 
 
 ---
 
-## Prerequisites
+## Installation
 
-1. **Install python dependencies**:
+1. **Install the package**:
    ```bash
-   pip install runpod
+   pip install .
+   ```
+   Or for editable development mode:
+   ```bash
+   pip install -e .
    ```
 
 2. **RunPod API Key**:
@@ -25,6 +29,8 @@ A Python command-line interface to manage RunPod instances (create, list, stop, 
    ```bash
    export RUNPOD_API_KEY="your_runpod_api_key"
    ```
+
+> **Note:** Once installed, the `runpod-deploy` executable is available in your `PATH`. Alternatively, you can run commands via the Python module syntax: `python3 -m runpod_deploy <subcommand>`.
 
 ---
 
@@ -40,7 +46,7 @@ Every subcommand supports passing the API key directly:
 Launches and configures a new RunPod instance.
 
 ```bash
-python3 cli.py create [OPTIONS]
+runpod-deploy create [OPTIONS]
 ```
 
 | Flag | Default | Description |
@@ -77,7 +83,7 @@ python3 cli.py create [OPTIONS]
 Lists all active and stopped pods associated with your account, showing Pod ID, Name, Status, GPU type, and connection endpoint.
 
 ```bash
-python3 cli.py list
+runpod-deploy list
 ```
 
 ---
@@ -86,7 +92,7 @@ python3 cli.py list
 Stops a running pod (releases GPU resources, but retains the data on the persistent network volume).
 
 ```bash
-python3 cli.py stop <pod-id>
+runpod-deploy stop <pod-id>
 ```
 
 ---
@@ -95,7 +101,7 @@ python3 cli.py stop <pod-id>
 Deletes a pod and releases all associated resources.
 
 ```bash
-python3 cli.py terminate <pod-id>
+runpod-deploy terminate <pod-id>
 ```
 
 ---
@@ -104,7 +110,7 @@ python3 cli.py terminate <pod-id>
 Retrieves and lists all available GPU models, including display names, VRAM sizes, CUDA Cores, maximum GPU configurations, and hourly pricing (Secure vs. Community cloud).
 
 ```bash
-python3 cli.py gpus
+runpod-deploy gpus
 ```
 
 ---
@@ -113,7 +119,7 @@ python3 cli.py gpus
 Uploads and executes an arbitrary local script on an active pod via SSH. Supports foreground streaming or detached background execution.
 
 ```bash
-python3 cli.py exec <pod-id> <script-path> [OPTIONS]
+runpod-deploy exec <pod-id> <script-path> [OPTIONS]
 ```
 
 | Flag | Default | Description |
@@ -130,7 +136,7 @@ python3 cli.py exec <pod-id> <script-path> [OPTIONS]
 Lists remote processes and background jobs managed by `runpod-deploy` on the pod, including Job ID, PID, running/completed/failed status, start time, duration, and log file path.
 
 ```bash
-python3 cli.py ps <pod-id>
+runpod-deploy ps <pod-id>
 ```
 
 ---
@@ -140,13 +146,13 @@ Inspects remote execution logs with full display (`cat`), tailing the last N lin
 
 ```bash
 # Display entire log (cat)
-python3 cli.py logs <pod-id> [job-id]
+runpod-deploy logs <pod-id> [job-id]
 
 # Show last 100 lines
-python3 cli.py logs <pod-id> [job-id] -n 100
+runpod-deploy logs <pod-id> [job-id] -n 100
 
 # Live follow log output (tail -f)
-python3 cli.py logs <pod-id> [job-id] -f
+runpod-deploy logs <pod-id> [job-id] -f
 ```
 
 ---
@@ -155,7 +161,7 @@ python3 cli.py logs <pod-id> [job-id] -f
 Terminates a remote job and its entire process group using a signal (defaults to `SIGTERM`).
 
 ```bash
-python3 cli.py kill <pod-id> <job-id-or-pid> [--signal SIGKILL]
+runpod-deploy kill <pod-id> <job-id-or-pid> [--signal SIGKILL]
 ```
 
 ---
@@ -164,17 +170,17 @@ python3 cli.py kill <pod-id> <job-id-or-pid> [--signal SIGKILL]
 
 ### Launch with default settings
 ```bash
-python3 cli.py create
+runpod-deploy create
 ```
 
 ### Launch attaching a Network Volume and Python requirements
 ```bash
-python3 cli.py create --volume-id "vol-abc123xyz" --requirements-path requirements.txt
+runpod-deploy create --volume-id "vol-abc123xyz" --requirements-path requirements.txt
 ```
 
 ### Launch and automatically run a script in the background
 ```bash
-python3 cli.py create \
+runpod-deploy create \
   --volume-id "vol-abc123xyz" \
   --run-script ./train.py \
   --script-args "--epochs 50 --lr 1e-4" \
@@ -184,21 +190,21 @@ python3 cli.py create \
 ### Execute a script on an existing pod and follow logs
 ```bash
 # Run in background
-python3 cli.py exec pod-abc123xyz ./eval.py --script-args "--model best.pt" -d
+runpod-deploy exec pod-abc123xyz ./eval.py --script-args "--model best.pt" -d
 
 # Check process status
-python3 cli.py ps pod-abc123xyz
+runpod-deploy ps pod-abc123xyz
 
 # Follow live output
-python3 cli.py logs pod-abc123xyz -f
+runpod-deploy logs pod-abc123xyz -f
 
 # Terminate if needed
-python3 cli.py kill pod-abc123xyz job-1757000000-a1b2c3
+runpod-deploy kill pod-abc123xyz job-1757000000-a1b2c3
 ```
 
 ### Fully customized creation
 ```bash
-python3 cli.py create \
+runpod-deploy create \
   --image-name "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-ubuntu22.04" \
   --gpu-type "NVIDIA RTX A6000" \
   --gpu-count 2 \
