@@ -8,6 +8,7 @@ import runpod
 
 from runpod_shell.ssh_runner import (
     find_ssh_private_key,
+    resolve_ssh_config,
     execute_remote_script,
     list_remote_jobs,
     view_remote_logs,
@@ -306,8 +307,12 @@ def cmd_create(args):
   if not ssh_port:
     ssh_port = "unknown"
 
+  ssh_config = getattr(args, "ssh_config", None)
+  resolved_cfg = resolve_ssh_config(ssh_config)
+  ssh_config_flag = f"-F {resolved_cfg} " if resolved_cfg else ""
+
   print(f"\nPod is ready! Connect via SSH:")
-  print(f"ssh -p {ssh_port} root@{ssh_host}")
+  print(f"ssh {ssh_config_flag}-p {ssh_port} root@{ssh_host}")
 
   if getattr(args, "run_script", None):
     priv_key = find_ssh_private_key(args.ssh_key_path, getattr(args, "ssh_private_key_path", None))
@@ -320,7 +325,8 @@ def cmd_create(args):
         detach=getattr(args, "detach", False),
         private_key_path=priv_key,
         wait_for_setup_flag=wait_setup,
-        ssh_timeout=getattr(args, "ssh_timeout", 180)
+        ssh_timeout=getattr(args, "ssh_timeout", 180),
+        ssh_config_path=ssh_config
     )
     if not getattr(args, "detach", False) and res.get("exit_code", 0) != 0:
       sys.exit(res["exit_code"])
@@ -351,7 +357,8 @@ def cmd_exec(args):
       detach=getattr(args, "detach", False),
       private_key_path=priv_key,
       wait_for_setup_flag=wait_setup,
-      ssh_timeout=getattr(args, "ssh_timeout", 180)
+      ssh_timeout=getattr(args, "ssh_timeout", 180),
+      ssh_config_path=getattr(args, "ssh_config", None)
   )
   if not getattr(args, "detach", False) and res.get("exit_code", 0) != 0:
     sys.exit(res["exit_code"])
@@ -372,7 +379,12 @@ def cmd_ps(args):
     fatal(f"Could not resolve SSH endpoint for pod '{args.pod_id}'.")
 
   priv_key = find_ssh_private_key(None, getattr(args, "ssh_private_key_path", None))
-  jobs = list_remote_jobs(ssh_host, ssh_port, private_key_path=priv_key)
+  jobs = list_remote_jobs(
+      ssh_host,
+      ssh_port,
+      private_key_path=priv_key,
+      ssh_config_path=getattr(args, "ssh_config", None)
+  )
 
   if not jobs:
     print(f"No managed jobs found on pod '{args.pod_id}'.")
@@ -411,7 +423,8 @@ def cmd_logs(args):
       job_id=args.job_id,
       tail_lines=args.tail,
       follow=args.follow,
-      private_key_path=priv_key
+      private_key_path=priv_key,
+      ssh_config_path=getattr(args, "ssh_config", None)
   )
 
 
@@ -434,7 +447,8 @@ def cmd_kill(args):
       port=ssh_port,
       target_id=args.target,
       signal_name=args.signal,
-      private_key_path=priv_key
+      private_key_path=priv_key,
+      ssh_config_path=getattr(args, "ssh_config", None)
   )
 
 
@@ -693,6 +707,12 @@ def main():
       help="Do not wait for container disk setup to finish before executing script"
   )
   create_parser.add_argument(
+      "--ssh-config",
+      dest="ssh_config",
+      default=os.environ.get("RUNPOD_SSH_CONFIG"),
+      help="Path to custom SSH config file (e.g. /dev/null), or RUNPOD_SSH_CONFIG env var"
+  )
+  create_parser.add_argument(
       "--ssh-timeout",
       dest="ssh_timeout",
       type=int,
@@ -723,6 +743,12 @@ def main():
       help="Path to private SSH key (auto-detected if omitted)"
   )
   exec_parser.add_argument(
+      "--ssh-config",
+      dest="ssh_config",
+      default=os.environ.get("RUNPOD_SSH_CONFIG"),
+      help="Path to custom SSH config file (e.g. /dev/null), or RUNPOD_SSH_CONFIG env var"
+  )
+  exec_parser.add_argument(
       "--no-wait-for-setup",
       dest="no_wait_for_setup",
       action="store_true",
@@ -743,6 +769,12 @@ def main():
       "--ssh-private-key-path",
       dest="ssh_private_key_path",
       help="Path to private SSH key (auto-detected if omitted)"
+  )
+  ps_parser.add_argument(
+      "--ssh-config",
+      dest="ssh_config",
+      default=os.environ.get("RUNPOD_SSH_CONFIG"),
+      help="Path to custom SSH config file (e.g. /dev/null), or RUNPOD_SSH_CONFIG env var"
   )
 
   # Logs Command
@@ -769,6 +801,12 @@ def main():
       dest="ssh_private_key_path",
       help="Path to private SSH key (auto-detected if omitted)"
   )
+  logs_parser.add_argument(
+      "--ssh-config",
+      dest="ssh_config",
+      default=os.environ.get("RUNPOD_SSH_CONFIG"),
+      help="Path to custom SSH config file (e.g. /dev/null), or RUNPOD_SSH_CONFIG env var"
+  )
 
   # Kill Command
   kill_parser = subparsers.add_parser("kill", help="Kill a remote job or process on a RunPod instance")
@@ -785,6 +823,12 @@ def main():
       "--ssh-private-key-path",
       dest="ssh_private_key_path",
       help="Path to private SSH key (auto-detected if omitted)"
+  )
+  kill_parser.add_argument(
+      "--ssh-config",
+      dest="ssh_config",
+      default=os.environ.get("RUNPOD_SSH_CONFIG"),
+      help="Path to custom SSH config file (e.g. /dev/null), or RUNPOD_SSH_CONFIG env var"
   )
 
   # List Command

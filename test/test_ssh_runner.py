@@ -168,6 +168,37 @@ class TestSSHRunner(unittest.TestCase):
     called_cmd = mock_run.call_args[0][0]
     self.assertIn("SIGKILL", called_cmd[-1])
 
+  def test_resolve_ssh_config(self):
+    # Explicit config
+    self.assertEqual(ssh_runner.resolve_ssh_config("/dev/null"), "/dev/null")
+    self.assertEqual(ssh_runner.resolve_ssh_config(Path("/custom/config")), "/custom/config")
+
+    # Disabled keywords
+    for kw in ["none", "system", "default", "", "NONE", "DEFAULT"]:
+      self.assertIsNone(ssh_runner.resolve_ssh_config(kw))
+
+    # Env var fallback
+    with patch.dict("os.environ", {"RUNPOD_SSH_CONFIG": "/env/ssh/config"}):
+      self.assertEqual(ssh_runner.resolve_ssh_config(), "/env/ssh/config")
+
+    with patch.dict("os.environ", {"RUNPOD_SSH_CONFIG": "none"}):
+      self.assertIsNone(ssh_runner.resolve_ssh_config())
+
+    with patch.dict("os.environ", {}, clear=True):
+      self.assertIsNone(ssh_runner.resolve_ssh_config())
+
+  def test_build_ssh_cmd_with_ssh_config(self):
+    cmd = ssh_runner.build_ssh_cmd("1.2.3.4", 2222, ssh_config_path="/dev/null")
+    self.assertIn("-F", cmd)
+    idx = cmd.index("-F")
+    self.assertEqual(cmd[idx + 1], "/dev/null")
+
+  def test_build_scp_cmd_with_ssh_config(self):
+    cmd = ssh_runner.build_scp_cmd(Path("/local/script.sh"), "/remote/script.sh", "1.2.3.4", 2222, ssh_config_path="/dev/null")
+    self.assertIn("-F", cmd)
+    idx = cmd.index("-F")
+    self.assertEqual(cmd[idx + 1], "/dev/null")
+
 
 if __name__ == "__main__":
   unittest.main()

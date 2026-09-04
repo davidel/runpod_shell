@@ -7,6 +7,7 @@ A Python command-line interface to manage RunPod instances (create, list, stop, 
 - **Docker-like Subcommands**: Simple interface to `create`, `list`, `stop`, `terminate`, and list `gpus`.
 - **GPU Querying & Resolution**: List all available GPU types using the `gpus` subcommand, and use case-insensitive, unique substring, or fuzzy matching auto-resolution for `--gpu-type` values (e.g. `4090` auto-resolves to `NVIDIA GeForce RTX 4090`).
 - **Smart SSH Key Auto-Detection**: Searches for standard SSH public keys (`id_rsa.pub`, `id_ed25519.pub`, `id_ecdsa.pub`, `id_dsa.pub`) in your local `~/.ssh/` directory automatically.
+- **SSH Isolation & Sandbox Support**: Support for custom SSH config files via `--ssh-config` or `RUNPOD_SSH_CONFIG` (e.g. `/dev/null`), preventing "Bad owner or permissions" errors when running inside Bubblewrap, containers, or restricted user namespaces.
 - **Python Virtual Environments**: Resolves packages from `requirements.txt` (or custom path) and `--pip-packages` (CLI) and installs them in a persistent virtual environment (`/workspace/venv`).
 - **Container Customization**: Merges CLI and file-based apt packages (via `--apt-packages` and `--apt-packages-file`) and loads credentials from a `.env` file (via `--env-file`).
 - **Real SSH Address Output**: Resolves the exact host IP and external port from RunPod to print a ready-to-use SSH connection string.
@@ -24,10 +25,15 @@ A Python command-line interface to manage RunPod instances (create, list, stop, 
    pip install -e .
    ```
 
-2. **RunPod API Key**:
+2. **Environment Variables**:
    Obtain an API key from your RunPod settings and expose it:
    ```bash
    export RUNPOD_API_KEY="your_runpod_api_key"
+   ```
+
+   *(Optional)* When running within sandboxed or containerized environments (e.g. Bubblewrap), bypass system SSH config ownership checks:
+   ```bash
+   export RUNPOD_SSH_CONFIG="/dev/null"
    ```
 
 > **Note:** Once installed, the `runpod-shell` executable is available in your `PATH`. Alternatively, you can run commands via the Python module syntax: `python3 -m runpod_shell <subcommand>`.
@@ -74,6 +80,7 @@ runpod-shell create [OPTIONS]
 | `--script-args` | `""` | String arguments to pass to the script |
 | `-d`, `--detach` | `False` | Run script in background without waiting / streaming |
 | `--ssh-private-key-path` | *None* | Path to private SSH key (auto-detected if omitted) |
+| `--ssh-config` | *None* (or `$RUNPOD_SSH_CONFIG`) | Path to custom SSH config file (e.g. `/dev/null`, or `system`) |
 | `--no-wait-for-setup` | `False` | Do not wait for container disk setup to complete before executing script |
 | `--ssh-timeout` | `180` | Max seconds to wait for SSH and setup readiness |
 
@@ -127,6 +134,7 @@ runpod-shell exec <pod-id> <script-path> [OPTIONS]
 | `--script-args` | `""` | String arguments to pass to the script |
 | `-d`, `--detach` | `False` | Run script in background without waiting / streaming |
 | `--ssh-private-key-path` | *None* | Path to private SSH key (auto-detected if omitted) |
+| `--ssh-config` | *None* (or `$RUNPOD_SSH_CONFIG`) | Path to custom SSH config file (e.g. `/dev/null`, or `system`) |
 | `--no-wait-for-setup` | `False` | Do not wait for container disk setup to complete |
 | `--ssh-timeout` | `180` | Max seconds to wait for SSH and setup readiness |
 
@@ -136,8 +144,13 @@ runpod-shell exec <pod-id> <script-path> [OPTIONS]
 Lists remote processes and background jobs managed by `runpod-shell` on the pod, including Job ID, PID, running/completed/failed status, start time, duration, and log file path.
 
 ```bash
-runpod-shell ps <pod-id>
+runpod-shell ps <pod-id> [OPTIONS]
 ```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--ssh-private-key-path` | *None* | Path to private SSH key (auto-detected if omitted) |
+| `--ssh-config` | *None* (or `$RUNPOD_SSH_CONFIG`) | Path to custom SSH config file (e.g. `/dev/null`, or `system`) |
 
 ---
 
@@ -155,14 +168,27 @@ runpod-shell logs <pod-id> [job-id] -n 100
 runpod-shell logs <pod-id> [job-id] -f
 ```
 
+| Flag | Default | Description |
+|---|---|---|
+| `-n`, `--tail` | *None* | Number of lines to display from end of log |
+| `-f`, `--follow` | `False` | Follow log output in real-time |
+| `--ssh-private-key-path` | *None* | Path to private SSH key (auto-detected if omitted) |
+| `--ssh-config` | *None* (or `$RUNPOD_SSH_CONFIG`) | Path to custom SSH config file (e.g. `/dev/null`, or `system`) |
+
 ---
 
 ### 9. `kill`
 Terminates a remote job and its entire process group using a signal (defaults to `SIGTERM`).
 
 ```bash
-runpod-shell kill <pod-id> <job-id-or-pid> [--signal SIGKILL]
+runpod-shell kill <pod-id> <job-id-or-pid> [OPTIONS]
 ```
+
+| Flag | Default | Description |
+|---|---|---|
+| `-s`, `--signal` | `SIGTERM` | Signal to send (e.g. `SIGTERM`, `SIGKILL`) |
+| `--ssh-private-key-path` | *None* | Path to private SSH key (auto-detected if omitted) |
+| `--ssh-config` | *None* (or `$RUNPOD_SSH_CONFIG`) | Path to custom SSH config file (e.g. `/dev/null`, or `system`) |
 
 ---
 
@@ -211,3 +237,18 @@ runpod-shell create \
   --env-file secrets.env \
   --pip-packages torchinfo matplotlib
 ```
+
+### Running inside a Bubblewrap Sandbox or Container
+When running inside unprivileged user namespaces or Bubblewrap sandboxes, host system files under `/etc/ssh/ssh_config.d/` can trigger OpenSSH `Bad owner or permissions` errors. You can bypass them either globally:
+
+```bash
+export RUNPOD_SSH_CONFIG="/dev/null"
+runpod-shell exec pod-abc123xyz ./train.py
+```
+
+Or per-command using `--ssh-config`:
+
+```bash
+runpod-shell exec pod-abc123xyz ./train.py --ssh-config /dev/null
+```
+

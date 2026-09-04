@@ -33,8 +33,24 @@ def find_ssh_private_key(public_key_path=None, explicit_private_key_path=None):
   return None
 
 
-def build_ssh_cmd(host, port, remote_command=None, private_key_path=None, tty=False):
+def resolve_ssh_config(explicit_config=None):
+  if explicit_config is not None:
+    if str(explicit_config).lower() in ("none", "system", "default", ""):
+      return None
+    return str(explicit_config)
+
+  env_config = os.environ.get("RUNPOD_SSH_CONFIG")
+  if env_config and env_config.lower() not in ("none", "system", "default", ""):
+    return env_config
+
+  return None
+
+
+def build_ssh_cmd(host, port, remote_command=None, private_key_path=None, tty=False, ssh_config_path=None):
   cmd = ["ssh", "-p", str(port)]
+  cfg = resolve_ssh_config(ssh_config_path)
+  if cfg:
+    cmd.extend(["-F", str(cfg)])
   cmd.extend(["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR"])
   if private_key_path:
     cmd.extend(["-i", str(private_key_path)])
@@ -46,8 +62,11 @@ def build_ssh_cmd(host, port, remote_command=None, private_key_path=None, tty=Fa
   return cmd
 
 
-def build_scp_cmd(local_path, remote_path, host, port, private_key_path=None):
+def build_scp_cmd(local_path, remote_path, host, port, private_key_path=None, ssh_config_path=None):
   cmd = ["scp", "-P", str(port)]
+  cfg = resolve_ssh_config(ssh_config_path)
+  if cfg:
+    cmd.extend(["-F", str(cfg)])
   cmd.extend(["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR"])
   if private_key_path:
     cmd.extend(["-i", str(private_key_path)])
@@ -55,11 +74,11 @@ def build_scp_cmd(local_path, remote_path, host, port, private_key_path=None):
   return cmd
 
 
-def wait_for_ssh(host, port, private_key_path=None, timeout=180, interval=3):
+def wait_for_ssh(host, port, private_key_path=None, timeout=180, interval=3, ssh_config_path=None):
   print(f"Waiting for SSH daemon at {host}:{port} to become available...")
   start_time = time.time()
   while time.time() - start_time < timeout:
-    cmd = build_ssh_cmd(host, port, "true", private_key_path=private_key_path)
+    cmd = build_ssh_cmd(host, port, "true", private_key_path=private_key_path, ssh_config_path=ssh_config_path)
     try:
       res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
       if res.returncode == 0:
@@ -71,12 +90,12 @@ def wait_for_ssh(host, port, private_key_path=None, timeout=180, interval=3):
   raise TimeoutError(f"Timed out waiting for SSH daemon at {host}:{port} after {timeout} seconds.")
 
 
-def wait_for_setup(host, port, private_key_path=None, timeout=300, interval=5):
+def wait_for_setup(host, port, private_key_path=None, timeout=300, interval=5, ssh_config_path=None):
   print("Waiting for container disk and environment setup to complete...")
   check_cmd = "test -f /workspace/.setup_complete || test -f /tmp/.setup_complete"
   start_time = time.time()
   while time.time() - start_time < timeout:
-    cmd = build_ssh_cmd(host, port, check_cmd, private_key_path=private_key_path)
+    cmd = build_ssh_cmd(host, port, check_cmd, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
     try:
       res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
       if res.returncode == 0:
@@ -96,22 +115,23 @@ def execute_remote_script(
     detach=False,
     private_key_path=None,
     wait_for_setup_flag=True,
-    ssh_timeout=180
+    ssh_timeout=180,
+    ssh_config_path=None
 ):
   local_path = Path(script_path).expanduser()
   if not local_path.exists():
     raise FileNotFoundError(f"Local script not found at {local_path}")
 
-  wait_for_ssh(host, port, private_key_path=private_key_path, timeout=ssh_timeout)
+  wait_for_ssh(host, port, private_key_path=private_key_path, timeout=ssh_timeout, ssh_config_path=ssh_config_path)
 
   if wait_for_setup_flag:
-    wait_for_setup(host, port, private_key_path=private_key_path, timeout=ssh_timeout)
+    wait_for_setup(host, port, private_key_path=private_key_path, timeout=ssh_timeout, ssh_config_path=ssh_config_path)
 
   job_id = f"job-{int(time.time())}-{uuid.uuid4().hex[:6]}"
   remote_script_path = f"/tmp/{job_id}_{local_path.name}"
 
   print(f"Uploading script '{local_path.name}' to remote pod...")
-  scp_cmd = build_scp_cmd(local_path, remote_script_path, host, port, private_key_path=private_key_path)
+  scp_cmd = build_scp_cmd(local_path, remote_script_path, host, port, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
   upload_res = subprocess.run(scp_cmd, capture_output=True, text=True)
   if upload_res.returncode != 0:
     raise RuntimeError(f"Failed to upload script via SCP: {upload_res.stderr.strip()}")
@@ -163,7 +183,7 @@ echo "LOG_FILE:$LOG_FILE"
 echo "JOB_ID:{job_id}"
 """
 
-  launch_cmd = build_ssh_cmd(host, port, launcher_script, private_key_path=private_key_path)
+  launch_cmd = build_ssh_cmd(host, port, launcher_script, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
   launch_res = subprocess.run(launch_cmd, capture_output=True, text=True)
   if launch_res.returncode != 0:
     raise RuntimeError(f"Failed to launch script on pod: {launch_res.stderr.strip()}")
@@ -192,7 +212,8 @@ echo "JOB_ID:{job_id}"
       host,
       port,
       f"tail -n +1 --pid={pid} -f '{log_file}' 2>/dev/null || tail -n +1 -f '{log_file}'",
-      private_key_path=private_key_path
+      private_key_path=private_key_path,
+      ssh_config_path=ssh_config_path
   )
 
   try:
@@ -207,7 +228,8 @@ echo "JOB_ID:{job_id}"
       host,
       port,
       f"cat /workspace/.runpod_jobs/{job_id}/exit_code 2>/dev/null || cat /tmp/.runpod_jobs/{job_id}/exit_code 2>/dev/null || echo unknown",
-      private_key_path=private_key_path
+      private_key_path=private_key_path,
+      ssh_config_path=ssh_config_path
   )
   code_res = subprocess.run(exit_code_cmd, capture_output=True, text=True)
   exit_code_str = code_res.stdout.strip()
@@ -217,7 +239,7 @@ echo "JOB_ID:{job_id}"
   return {"job_id": job_id, "pid": pid, "log_file": log_file, "exit_code": exit_code}
 
 
-def list_remote_jobs(host, port, private_key_path=None):
+def list_remote_jobs(host, port, private_key_path=None, ssh_config_path=None):
   script = """
 python3 -c '
 import json
@@ -284,7 +306,7 @@ jobs.sort(key=lambda x: x.get("started_at", 0), reverse=True)
 print(json.dumps(jobs))
 '
 """
-  cmd = build_ssh_cmd(host, port, script, private_key_path=private_key_path)
+  cmd = build_ssh_cmd(host, port, script, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
   res = subprocess.run(cmd, capture_output=True, text=True)
   if res.returncode != 0:
     raise RuntimeError(f"Failed to list remote jobs: {res.stderr.strip()}")
@@ -295,8 +317,8 @@ print(json.dumps(jobs))
     return []
 
 
-def view_remote_logs(host, port, job_id=None, tail_lines=None, follow=False, private_key_path=None):
-  jobs = list_remote_jobs(host, port, private_key_path=private_key_path)
+def view_remote_logs(host, port, job_id=None, tail_lines=None, follow=False, private_key_path=None, ssh_config_path=None):
+  jobs = list_remote_jobs(host, port, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
   target_job = None
 
   if job_id:
@@ -332,12 +354,12 @@ def view_remote_logs(host, port, job_id=None, tail_lines=None, follow=False, pri
     remote_cmd = f"cat '{log_file}'"
     tty = False
 
-  cmd = build_ssh_cmd(host, port, remote_cmd, private_key_path=private_key_path, tty=tty)
+  cmd = build_ssh_cmd(host, port, remote_cmd, private_key_path=private_key_path, tty=tty, ssh_config_path=ssh_config_path)
   subprocess.run(cmd)
 
 
-def kill_remote_job(host, port, target_id, signal_name="SIGTERM", private_key_path=None):
-  jobs = list_remote_jobs(host, port, private_key_path=private_key_path)
+def kill_remote_job(host, port, target_id, signal_name="SIGTERM", private_key_path=None, ssh_config_path=None):
+  jobs = list_remote_jobs(host, port, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
   target_job = None
 
   for j in jobs:
@@ -370,7 +392,7 @@ else
 fi
 """
 
-  cmd = build_ssh_cmd(host, port, kill_script, private_key_path=private_key_path)
+  cmd = build_ssh_cmd(host, port, kill_script, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
   res = subprocess.run(cmd, capture_output=True, text=True)
   output = res.stdout.strip()
 
