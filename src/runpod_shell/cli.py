@@ -1,4 +1,5 @@
 import argparse
+import base64
 import difflib
 import os
 from pathlib import Path
@@ -265,6 +266,7 @@ def cmd_create(args):
 
   # Launch Pod
   print(f"Launching RunPod instance '{args.name}'...")
+  b64_setup = base64.b64encode(container_disk_setup.encode("utf-8")).decode("ascii")
   create_args = {
       "name": args.name,
       "image_name": args.image_name,
@@ -277,7 +279,7 @@ def cmd_create(args):
       "cloud_type": args.cloud_type,
       "min_vcpu_count": args.vcpu_count,
       "min_memory_in_gb": args.memory,
-      "docker_args": f"/bin/bash -c '{container_disk_setup} && sleep infinity'"
+      "docker_args": f"/bin/bash -c 'echo {b64_setup} | base64 -d | /bin/bash && sleep infinity'"
   }
 
   if args.volume_id:

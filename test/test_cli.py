@@ -3,9 +3,11 @@ from unittest.mock import MagicMock
 # Mock runpod module to avoid ModuleNotFoundError when importing cli
 sys.modules['runpod'] = MagicMock()
 
+import base64
+from pathlib import Path
+import re
 import unittest
 from unittest.mock import patch, mock_open
-from pathlib import Path
 
 # Import the module under test
 import runpod_shell.cli as cli
@@ -115,9 +117,14 @@ class TestRunPodShellCLI(unittest.TestCase):
     self.assertEqual(kwargs["min_memory_in_gb"], 8)
 
     docker_args = kwargs["docker_args"]
-    self.assertIn(r"echo 'importlib-metadata==6.7.0; python_version < '\''3.8'\''' > /workspace/requirements.txt", docker_args)
-    self.assertIn('if [ -d "/workspace/venv" ] && [ -f "/root/.bashrc" ] && ! grep -q "source /workspace/venv/bin/activate" /root/.bashrc; then', docker_args)
-    self.assertIn('echo "source /workspace/venv/bin/activate" >> /root/.bashrc', docker_args)
+    self.assertNotIn("\n", docker_args)
+    self.assertNotIn('"', docker_args)
+    m = re.search(r"echo\s+([A-Za-z0-9+/=]+)\s+\|\s+base64\s+-d", docker_args)
+    self.assertIsNotNone(m)
+    decoded_script = base64.b64decode(m.group(1)).decode("utf-8")
+    self.assertIn(r"echo 'importlib-metadata==6.7.0; python_version < '\''3.8'\''' > /workspace/requirements.txt", decoded_script)
+    self.assertIn('if [ -d "/workspace/venv" ] && [ -f "/root/.bashrc" ] && ! grep -q "source /workspace/venv/bin/activate" /root/.bashrc; then', decoded_script)
+    self.assertIn('echo "source /workspace/venv/bin/activate" >> /root/.bashrc', decoded_script)
 
   @patch("runpod_shell.cli.get_ssh_key")
   @patch("runpod_shell.cli.read_requirements")
