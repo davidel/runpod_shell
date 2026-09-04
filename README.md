@@ -114,10 +114,16 @@ runpod-shell terminate <pod-id>
 ---
 
 ### 5. `gpus`
-Retrieves and lists all available GPU models, including display names, VRAM sizes, CUDA Cores, maximum GPU configurations, and hourly pricing (Secure vs. Community cloud).
+Retrieves and lists all available GPU models, including display names, VRAM sizes, maximum GPU configurations, and hourly pricing (Secure vs. Community cloud). Supports optional regex filtering on GPU ID or Display Name (case-insensitive).
 
 ```bash
+# List all GPUs
 runpod-shell gpus
+
+# Filter by regex (positional or --regex/-r/--filter flag)
+runpod-shell gpus 4090
+runpod-shell gpus "A100|H100"
+runpod-shell gpus -r "RTX 40\d0"
 ```
 
 ---

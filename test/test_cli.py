@@ -204,7 +204,60 @@ class TestRunPodShellCLI(unittest.TestCase):
     test_args = ["cli.py", "gpus"]
     with patch.object(sys, "argv", test_args):
       cli.main()
-    mock_stdout.write.assert_any_call("RTX 4090                       | RTX 4090                  | 24        | N/A        | N/A | N/A     | N/A      ")
+    mock_stdout.write.assert_any_call("RTX 4090                       | RTX 4090                  | 24        | N/A | N/A     | N/A      ")
+
+  @patch("runpod.get_gpus")
+  @patch("sys.stdout")
+  def test_gpus_command_regex_match_id(self, mock_stdout, mock_get_gpus):
+    mock_get_gpus.return_value = [
+        {"id": "NVIDIA GeForce RTX 4090", "displayName": "RTX 4090", "memoryInGb": 24},
+        {"id": "NVIDIA RTX A6000", "displayName": "RTX A6000", "memoryInGb": 48}
+    ]
+    test_args = ["cli.py", "gpus", "4090"]
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+    calls = [call[0][0] for call in mock_stdout.write.call_args_list]
+    matched_lines = [line for line in calls if "4090" in line]
+    unmatched_lines = [line for line in calls if "A6000" in line]
+    self.assertTrue(len(matched_lines) > 0)
+    self.assertEqual(len(unmatched_lines), 0)
+
+  @patch("runpod.get_gpus")
+  @patch("sys.stdout")
+  def test_gpus_command_regex_match_display_name(self, mock_stdout, mock_get_gpus):
+    mock_get_gpus.return_value = [
+        {"id": "AMD Instinct MI300X OAM", "displayName": "MI300X", "memoryInGb": 192},
+        {"id": "NVIDIA RTX A6000", "displayName": "RTX A6000", "memoryInGb": 48}
+    ]
+    test_args = ["cli.py", "gpus", "-r", "mi300"]
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+    calls = [call[0][0] for call in mock_stdout.write.call_args_list]
+    matched_lines = [line for line in calls if "MI300X" in line]
+    unmatched_lines = [line for line in calls if "A6000" in line]
+    self.assertTrue(len(matched_lines) > 0)
+    self.assertEqual(len(unmatched_lines), 0)
+
+  @patch("runpod.get_gpus")
+  @patch("sys.stdout")
+  def test_gpus_command_regex_no_match(self, mock_stdout, mock_get_gpus):
+    mock_get_gpus.return_value = [
+        {"id": "RTX 4090", "displayName": "RTX 4090", "memoryInGb": 24}
+    ]
+    test_args = ["cli.py", "gpus", "nonexistent"]
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+    mock_stdout.write.assert_any_call("No GPUs matching pattern 'nonexistent' found.")
+
+  @patch("runpod.get_gpus")
+  def test_gpus_command_invalid_regex(self, mock_get_gpus):
+    mock_get_gpus.return_value = [
+        {"id": "RTX 4090", "displayName": "RTX 4090", "memoryInGb": 24}
+    ]
+    test_args = ["cli.py", "gpus", "["]
+    with patch.object(sys, "argv", test_args):
+      with self.assertRaises(ValueError):
+        cli.main()
 
   @patch("runpod_shell.cli.execute_remote_script")
   @patch("runpod_shell.cli.find_ssh_private_key")

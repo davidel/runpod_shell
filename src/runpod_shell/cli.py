@@ -2,6 +2,7 @@ import argparse
 import difflib
 import os
 from pathlib import Path
+import re
 import sys
 import time
 import runpod
@@ -519,7 +520,6 @@ def cmd_gpus(args):
         id
         displayName
         memoryInGb
-        cudaCores
         maxGpuCount
         securePrice
         communityPrice
@@ -538,13 +538,28 @@ def cmd_gpus(args):
     print("No GPUs found.")
     return
 
-  print(f"{'GPU ID':<30} | {'DISPLAY NAME':<25} | {'VRAM (GB)':<9} | {'CUDA CORES':<10} | {'MAX':<3} | {'SECURE':<7} | {'COMMUNITY':<9}")
-  print("-" * 110)
+  filter_pattern = getattr(args, "regex_filter", None) or getattr(args, "filter", None)
+  if filter_pattern:
+    try:
+      regex = re.compile(filter_pattern, re.IGNORECASE)
+    except re.error as e:
+      fatal(f"Invalid regex pattern '{filter_pattern}': {e}", ValueError)
+
+    gpus = [
+        g for g in gpus
+        if regex.search(g.get("id") or "") or regex.search(g.get("displayName") or "")
+    ]
+
+    if not gpus:
+      print(f"No GPUs matching pattern '{filter_pattern}' found.")
+      return
+
+  print(f"{'GPU ID':<30} | {'DISPLAY NAME':<25} | {'VRAM (GB)':<9} | {'MAX':<3} | {'SECURE':<7} | {'COMMUNITY':<9}")
+  print("-" * 98)
   for g in gpus:
     gpu_id = g.get("id", "N/A")
     display_name = g.get("displayName", "N/A")
     ram = g.get("memoryInGb", "N/A")
-    cores = g.get("cudaCores", "N/A")
     max_gpus = g.get("maxGpuCount", "N/A")
     sec_price = g.get("securePrice")
     comm_price = g.get("communityPrice")
@@ -552,7 +567,7 @@ def cmd_gpus(args):
     sec_price_str = f"${sec_price:.2f}/h" if isinstance(sec_price, (int, float)) else "N/A"
     comm_price_str = f"${comm_price:.2f}/h" if isinstance(comm_price, (int, float)) else "N/A"
 
-    print(f"{gpu_id:<30} | {display_name:<25} | {ram:<9} | {cores:<10} | {max_gpus:<3} | {sec_price_str:<7} | {comm_price_str:<9}")
+    print(f"{gpu_id:<30} | {display_name:<25} | {ram:<9} | {max_gpus:<3} | {sec_price_str:<7} | {comm_price_str:<9}")
 
 
 def main():
@@ -843,7 +858,21 @@ def main():
   terminate_parser.add_argument("pod_id", help="The ID of the pod to terminate")
 
   # Gpus Command
-  subparsers.add_parser("gpus", help="List all available GPU types and details on RunPod")
+  gpus_parser = subparsers.add_parser("gpus", help="List all available GPU types and details on RunPod")
+  gpus_parser.add_argument(
+      "filter",
+      nargs="?",
+      default=None,
+      help="Optional regex pattern to filter GPUs by ID or Display Name (case-insensitive)"
+  )
+  gpus_parser.add_argument(
+      "-r",
+      "--regex",
+      "--filter",
+      dest="regex_filter",
+      default=None,
+      help="Optional regex pattern to filter GPUs by ID or Display Name (case-insensitive)"
+  )
 
   args = parser.parse_args()
 
