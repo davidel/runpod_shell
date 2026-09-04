@@ -751,6 +751,54 @@ class TestRunPodShellCLI(unittest.TestCase):
     self.assertEqual(template["id"], "custom-template")
     self.assertEqual(template["imageName"], "custom/image:tag")
 
+  def test_build_container_setup_script_quoting(self):
+    script = cli.build_container_setup_script(
+        apt_packages=["screen", "tree", "gcc"],
+        requirements_content="",
+        pip_packages=["scdiag[all] @ git+https://github.com/davidel/scdiag.git", "nvidia-ml-py"],
+        volume_mount_path="/workspace"
+    )
+    self.assertIn("pip install 'scdiag[all] @ git+https://github.com/davidel/scdiag.git' nvidia-ml-py", script)
+    self.assertIn("apt-get install -y screen tree gcc", script)
+
+  @patch("runpod_shell.cli.get_ssh_key")
+  @patch("runpod_shell.cli.read_requirements")
+  @patch("runpod_shell.cli.read_apt_packages_file")
+  @patch("runpod.create_pod")
+  @patch("runpod.get_pod")
+  @patch("time.sleep")
+  def test_create_command_pip_packages_with_spaces(self, mock_sleep, mock_get_pod, mock_create_pod, mock_apt_file, mock_req, mock_ssh_key):
+    mock_ssh_key.return_value = "ssh-rsa fake_public_key"
+    mock_req.return_value = ""
+    mock_apt_file.return_value = []
+    mock_create_pod.return_value = {"id": "pod-123"}
+    mock_get_pod.return_value = {
+        "id": "pod-123",
+        "desiredStatus": "RUNNING",
+        "runtime": {
+            "gpus": True,
+            "ports": [{"privatePort": 22, "isExternal": 12345, "address": "12.34.56.78"}]
+        }
+    }
+    test_args = [
+        "cli.py",
+        "--api-key", "fake-api-key",
+        "create",
+        "--name", "test-worker",
+        "--image-name", "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404",
+        "--pip-packages", "scdiag[all] @ git+https://github.com/davidel/scdiag.git", "nvidia-ml-py"
+    ]
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+    mock_create_pod.assert_called_once()
+    kwargs = mock_create_pod.call_args[1]
+    docker_args = kwargs["docker_args"]
+    m = re.search(r"echo\s+([A-Za-z0-9+/=]+)\s+\|\s+base64\s+-d", docker_args)
+    self.assertIsNotNone(m)
+    decoded_script = base64.b64decode(m.group(1)).decode("utf-8")
+    self.assertIn("pip install 'scdiag[all] @ git+https://github.com/davidel/scdiag.git' nvidia-ml-py", decoded_script)
+
 
 if __name__ == "__main__":
   unittest.main()
+

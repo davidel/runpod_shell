@@ -4,6 +4,7 @@ import difflib
 import os
 from pathlib import Path
 import re
+import shlex
 import sys
 import time
 import runpod
@@ -116,18 +117,23 @@ def read_apt_packages_file(file_path_str):
 
 def build_container_setup_script(apt_packages, requirements_content, pip_packages, volume_mount_path):
   # Build apt install command
-  apt_packages_str = " ".join(apt_packages)
+  apt_packages_str = " ".join(shlex.quote(p) for p in apt_packages) if apt_packages else ""
   apt_install_cmd = f"apt-get update && apt-get install -y {apt_packages_str}" if apt_packages else "true"
 
   # Build python venv setup script
   escaped_requirements = requirements_content.replace("'", "'\\''")
   write_requirements = f"echo '{escaped_requirements}' > {volume_mount_path}/requirements.txt" if requirements_content.strip() else "true"
-  pip_packages_str = " ".join(pip_packages) if pip_packages else ""
+  pip_packages_str = " ".join(shlex.quote(p) for p in pip_packages) if pip_packages else ""
 
   if requirements_content.strip() or pip_packages_str:
     venv_dir = f"{volume_mount_path}/venv"
     sentinel = f"{venv_dir}/.setup_complete"
     install_pip_packages = f"{venv_dir}/bin/pip install {pip_packages_str}" if pip_packages_str else "true"
+    if pip_packages_str:
+      existing_venv_install = f"""echo "Installing command-line pip packages..."; \\
+    {install_pip_packages}; \\"""
+    else:
+      existing_venv_install = "true; \\"
 
     setup_requirements = f"""{write_requirements} && \\
 if [ -d "{venv_dir}" ] && [ ! -f "{sentinel}" ]; then \\
@@ -143,10 +149,7 @@ if [ ! -d "{venv_dir}" ]; then \\
     touch "{sentinel}"; \\
 else \\
     echo "Found healthy virtual environment."; \\
-    if [ "{pip_packages_str}" != "" ]; then \\
-        echo "Installing command-line pip packages..."; \\
-        {install_pip_packages}; \\
-    fi \\
+    {existing_venv_install}
 fi && \\
 if [ -d "{venv_dir}" ] && [ -f "/root/.bashrc" ] && ! grep -q "source {venv_dir}/bin/activate" /root/.bashrc; then \\
     echo "source {venv_dir}/bin/activate" >> /root/.bashrc; \\
