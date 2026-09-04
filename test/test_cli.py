@@ -102,6 +102,7 @@ class TestRunPodShellCLI(unittest.TestCase):
         "--api-key", "fake-api-key",
         "create",
         "--name", "test-worker",
+        "--image-name", "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404",
         "--pip-packages", "scipy"
     ]
 
@@ -158,6 +159,7 @@ class TestRunPodShellCLI(unittest.TestCase):
         "--api-key", "fake-api-key",
         "create",
         "--name", "test-worker-custom",
+        "--image-name", "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404",
         "--vcpu-count", "8",
         "--memory", "16"
     ]
@@ -295,6 +297,7 @@ class TestRunPodShellCLI(unittest.TestCase):
         "--api-key", "fake-api-key",
         "create",
         "--name", "test-worker",
+        "--image-name", "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404",
         "--run-script", "script.sh",
         "--script-args", "--flag 1"
     ]
@@ -343,6 +346,7 @@ class TestRunPodShellCLI(unittest.TestCase):
         "--api-key", "fake-api-key",
         "create",
         "--name", "test-worker",
+        "--image-name", "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404",
         "--run-script", "script.sh",
         "--ssh-config", "/dev/null"
     ]
@@ -543,6 +547,142 @@ class TestRunPodShellCLI(unittest.TestCase):
         ssh_timeout=180,
         ssh_config_path="/env/ssh/config"
     )
+
+  @patch("runpod_shell.cli.get_ssh_key")
+  @patch("runpod_shell.cli.read_requirements")
+  @patch("runpod_shell.cli.read_apt_packages_file")
+  @patch("runpod.create_pod")
+  @patch("runpod.get_pod")
+  @patch("time.sleep")
+  def test_create_with_template_id(self, mock_sleep, mock_get_pod, mock_create_pod, mock_apt_file, mock_req, mock_ssh_key):
+    mock_ssh_key.return_value = "ssh-rsa fake_public_key"
+    mock_req.return_value = ""
+    mock_apt_file.return_value = []
+    mock_create_pod.return_value = {"id": "pod-123"}
+    mock_get_pod.return_value = {
+        "id": "pod-123",
+        "desiredStatus": "RUNNING",
+        "runtime": {
+            "gpus": True,
+            "ports": [{"privatePort": 22, "isExternal": 12345, "address": "12.34.56.78"}]
+        }
+    }
+
+    test_args = [
+        "cli.py",
+        "--api-key", "fake-api-key",
+        "create",
+        "--name", "test-template-worker",
+        "--template-id", "runpod-torch-v280"
+    ]
+
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+
+    mock_create_pod.assert_called_once()
+    kwargs = mock_create_pod.call_args[1]
+    self.assertEqual(kwargs["name"], "test-template-worker")
+    self.assertEqual(kwargs["template_id"], "runpod-torch-v280")
+    self.assertEqual(kwargs["image_name"], "")
+
+  @patch("runpod_shell.cli.get_ssh_key")
+  @patch("runpod_shell.cli.read_requirements")
+  @patch("runpod_shell.cli.read_apt_packages_file")
+  @patch("runpod.create_pod")
+  @patch("runpod.get_pod")
+  @patch("time.sleep")
+  def test_create_template_id_precedence_over_image_name(self, mock_sleep, mock_get_pod, mock_create_pod, mock_apt_file, mock_req, mock_ssh_key):
+    mock_ssh_key.return_value = "ssh-rsa fake_public_key"
+    mock_req.return_value = ""
+    mock_apt_file.return_value = []
+    mock_create_pod.return_value = {"id": "pod-123"}
+    mock_get_pod.return_value = {
+        "id": "pod-123",
+        "desiredStatus": "RUNNING",
+        "runtime": {
+            "gpus": True,
+            "ports": [{"privatePort": 22, "isExternal": 12345, "address": "12.34.56.78"}]
+        }
+    }
+
+    test_args = [
+        "cli.py",
+        "--api-key", "fake-api-key",
+        "create",
+        "--name", "test-precedence-worker",
+        "--template-id", "runpod-torch-v280",
+        "--image-name", "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+    ]
+
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+
+    mock_create_pod.assert_called_once()
+    kwargs = mock_create_pod.call_args[1]
+    self.assertEqual(kwargs["name"], "test-precedence-worker")
+    self.assertEqual(kwargs["template_id"], "runpod-torch-v280")
+    self.assertEqual(kwargs["image_name"], "")
+
+  @patch("runpod_shell.cli.get_ssh_key")
+  @patch("runpod_shell.cli.read_requirements")
+  @patch("runpod_shell.cli.read_apt_packages_file")
+  @patch("runpod.create_pod")
+  @patch("runpod.get_pod")
+  @patch("time.sleep")
+  def test_create_without_template_or_image_fails(self, mock_sleep, mock_get_pod, mock_create_pod, mock_apt_file, mock_req, mock_ssh_key):
+    mock_ssh_key.return_value = "ssh-rsa fake_public_key"
+    mock_req.return_value = ""
+    mock_apt_file.return_value = []
+
+    test_args = [
+        "cli.py",
+        "--api-key", "fake-api-key",
+        "create",
+        "--name", "test-fail-worker"
+    ]
+
+    with patch.object(sys, "argv", test_args):
+      with self.assertRaises(ValueError) as ctx:
+        cli.main()
+      self.assertIn("Either --template-id or --image-name must be specified.", str(ctx.exception))
+
+  @patch("sys.stdout")
+  @patch("runpod_shell.cli.get_pod_templates")
+  def test_cmd_templates_listing_and_filtering(self, mock_get_templates, mock_stdout):
+    mock_get_templates.return_value = [
+        {
+            "id": "runpod-torch-v240",
+            "name": "Runpod Pytorch 2.4.0",
+            "imageName": "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
+        },
+        {
+            "id": "runpod-torch-v280",
+            "name": "Runpod Pytorch 2.8.0",
+            "imageName": "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404"
+        },
+        {
+            "id": "runpod-ubuntu",
+            "name": "Runpod Ubuntu 20.04",
+            "imageName": "runpod/base:0.7.0-ubuntu2004"
+        }
+    ]
+
+    test_args = [
+        "cli.py",
+        "--api-key", "fake-api-key",
+        "templates",
+        "--filter", "torch"
+    ]
+
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+
+    mock_get_templates.assert_called_once()
+    calls = [call[0][0] for call in mock_stdout.write.call_args_list]
+    matched_lines = [line for line in calls if "runpod-torch" in line]
+    unmatched_lines = [line for line in calls if "runpod-ubuntu" in line]
+    self.assertTrue(len(matched_lines) > 0)
+    self.assertEqual(len(unmatched_lines), 0)
 
 
 if __name__ == "__main__":

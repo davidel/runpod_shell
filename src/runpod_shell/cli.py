@@ -264,12 +264,17 @@ def cmd_create(args):
   container_env.update(args.env)
   container_env["PUBLIC_KEY"] = ssh_public_key
 
+  # Check image_name and template_id
+  template_id = getattr(args, "template_id", None)
+  image_name = getattr(args, "image_name", None)
+  if not template_id and not image_name:
+    fatal("Either --template-id or --image-name must be specified.", ValueError)
+
   # Launch Pod
   print(f"Launching RunPod instance '{args.name}'...")
   b64_setup = base64.b64encode(container_disk_setup.encode("utf-8")).decode("ascii")
   create_args = {
       "name": args.name,
-      "image_name": args.image_name,
       "gpu_type_id": gpu_type,
       "gpu_count": args.gpu_count,
       "container_disk_in_gb": args.container_disk_size,
@@ -281,6 +286,12 @@ def cmd_create(args):
       "min_memory_in_gb": args.memory,
       "docker_args": f"/bin/bash -c 'echo {b64_setup} | base64 -d | /bin/bash && sleep infinity'"
   }
+
+  if template_id:
+    create_args["template_id"] = template_id
+    create_args["image_name"] = ""
+  else:
+    create_args["image_name"] = image_name
 
   if args.volume_id:
     create_args["network_volume_id"] = args.volume_id
@@ -572,6 +583,59 @@ def cmd_gpus(args):
     print(f"{gpu_id:<30} | {display_name:<25} | {ram:<9} | {max_gpus:<3} | {sec_price_str:<7} | {comm_price_str:<9}")
 
 
+def get_pod_templates():
+  try:
+    from runpod.api.graphql import run_graphql_query
+    query = """
+    query PodTemplates {
+      myself {
+        podTemplates {
+          id
+          name
+          imageName
+        }
+      }
+    }
+    """
+    response = run_graphql_query(query)
+    return response.get("data", {}).get("myself", {}).get("podTemplates", [])
+  except Exception as e:
+    fatal(f"Failed to retrieve templates: {e}", exc=e.__class__)
+
+
+def cmd_templates(args):
+  print("Fetching available pod templates...")
+  templates = get_pod_templates()
+
+  if not templates:
+    print("No templates found.")
+    return
+
+  filter_pattern = getattr(args, "regex_filter", None) or getattr(args, "filter", None)
+  if filter_pattern:
+    try:
+      regex = re.compile(filter_pattern, re.IGNORECASE)
+    except re.error as e:
+      fatal(f"Invalid regex pattern '{filter_pattern}': {e}", ValueError)
+
+    templates = [
+        t for t in templates
+        if regex.search(t.get("id") or "") or regex.search(t.get("name") or "") or regex.search(t.get("imageName") or "")
+    ]
+
+    if not templates:
+      print(f"No templates matching pattern '{filter_pattern}' found.")
+      return
+
+  print(f"{'TEMPLATE ID':<26} | {'NAME':<35} | {'IMAGE NAME'}")
+  print("-" * 110)
+  for t in templates:
+    t_id = t.get("id", "N/A")
+    name = t.get("name", "N/A")
+    image = t.get("imageName", "N/A")
+    print(f"{t_id:<26} | {name:<35} | {image}")
+
+
 def main():
   parser = argparse.ArgumentParser(
       prog="runpod-shell",
@@ -597,8 +661,17 @@ def main():
   )
   create_parser.add_argument(
       "--image-name",
-      default="runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404",
-      help="Base image name (default: %(default)s)"
+      "--image_name",
+      dest="image_name",
+      default=None,
+      help="Base image name (optional if --template-id is specified)"
+  )
+  create_parser.add_argument(
+      "--template-id",
+      "--template_id",
+      dest="template_id",
+      default=None,
+      help="RunPod template ID (takes precedence over --image-name)"
   )
   create_parser.add_argument(
       "--gpu-type",
@@ -876,6 +949,23 @@ def main():
       help="Optional regex pattern to filter GPUs by ID or Display Name (case-insensitive)"
   )
 
+  # Templates Command
+  templates_parser = subparsers.add_parser("templates", help="List available pod templates on RunPod")
+  templates_parser.add_argument(
+      "filter",
+      nargs="?",
+      default=None,
+      help="Optional regex pattern to filter templates by ID, Name, or Image (case-insensitive)"
+  )
+  templates_parser.add_argument(
+      "-r",
+      "--regex",
+      "--filter",
+      dest="regex_filter",
+      default=None,
+      help="Optional regex pattern to filter templates by ID, Name, or Image (case-insensitive)"
+  )
+
   args = parser.parse_args()
 
   # Set API Key
@@ -899,6 +989,8 @@ def main():
     cmd_terminate(args)
   elif args.command == "gpus":
     cmd_gpus(args)
+  elif args.command == "templates":
+    cmd_templates(args)
   elif args.command == "exec":
     cmd_exec(args)
   elif args.command == "ps":
