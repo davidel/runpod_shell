@@ -5,7 +5,7 @@ import sys
 import unittest
 from unittest.mock import patch, MagicMock
 
-import runpod_deploy.ssh_runner as ssh_runner
+import runpod_shell.ssh_runner as ssh_runner
 
 
 class TestSSHRunner(unittest.TestCase):
@@ -80,8 +80,8 @@ class TestSSHRunner(unittest.TestCase):
     self.assertTrue(res)
 
   @patch("pathlib.Path.exists", autospec=True)
-  @patch("runpod_deploy.ssh_runner.wait_for_ssh")
-  @patch("runpod_deploy.ssh_runner.wait_for_setup")
+  @patch("runpod_shell.ssh_runner.wait_for_ssh")
+  @patch("runpod_shell.ssh_runner.wait_for_setup")
   @patch("subprocess.run")
   def test_execute_remote_script_detach(self, mock_run, mock_wait_setup, mock_wait_ssh, mock_exists):
     mock_exists.return_value = True
@@ -106,8 +106,8 @@ class TestSSHRunner(unittest.TestCase):
     self.assertEqual(res["exit_code"], 0)
 
   @patch("pathlib.Path.exists", autospec=True)
-  @patch("runpod_deploy.ssh_runner.wait_for_ssh")
-  @patch("runpod_deploy.ssh_runner.wait_for_setup")
+  @patch("runpod_shell.ssh_runner.wait_for_ssh")
+  @patch("runpod_shell.ssh_runner.wait_for_setup")
   @patch("subprocess.run")
   def test_execute_remote_script_foreground(self, mock_run, mock_wait_setup, mock_wait_ssh, mock_exists):
     mock_exists.return_value = True
@@ -144,7 +144,7 @@ class TestSSHRunner(unittest.TestCase):
     self.assertEqual(len(jobs), 1)
     self.assertEqual(jobs[0]["job_id"], "job-1")
 
-  @patch("runpod_deploy.ssh_runner.list_remote_jobs")
+  @patch("runpod_shell.ssh_runner.list_remote_jobs")
   @patch("subprocess.run")
   def test_view_remote_logs_follow(self, mock_run, mock_list):
     mock_list.return_value = [
@@ -156,7 +156,7 @@ class TestSSHRunner(unittest.TestCase):
     self.assertIn("-t", called_cmd)
     self.assertIn("tail -n 50 -f '/workspace/logs/job-1.log'", called_cmd)
 
-  @patch("runpod_deploy.ssh_runner.list_remote_jobs")
+  @patch("runpod_shell.ssh_runner.list_remote_jobs")
   @patch("subprocess.run")
   def test_kill_remote_job(self, mock_run, mock_list):
     mock_list.return_value = [

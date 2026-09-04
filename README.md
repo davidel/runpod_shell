@@ -1,4 +1,4 @@
-# RunPod Deploy CLI
+# RunPod Shell CLI
 
 A Python command-line interface to manage RunPod instances (create, list, stop, and terminate pods) with optional persistent network volumes, customized container environments, and automatic SSH setup.
 
@@ -30,7 +30,7 @@ A Python command-line interface to manage RunPod instances (create, list, stop, 
    export RUNPOD_API_KEY="your_runpod_api_key"
    ```
 
-> **Note:** Once installed, the `runpod-deploy` executable is available in your `PATH`. Alternatively, you can run commands via the Python module syntax: `python3 -m runpod_deploy <subcommand>`.
+> **Note:** Once installed, the `runpod-shell` executable is available in your `PATH`. Alternatively, you can run commands via the Python module syntax: `python3 -m runpod_shell <subcommand>`.
 
 ---
 
@@ -46,7 +46,7 @@ Every subcommand supports passing the API key directly:
 Launches and configures a new RunPod instance.
 
 ```bash
-runpod-deploy create [OPTIONS]
+runpod-shell create [OPTIONS]
 ```
 
 | Flag | Default | Description |
@@ -83,7 +83,7 @@ runpod-deploy create [OPTIONS]
 Lists all active and stopped pods associated with your account, showing Pod ID, Name, Status, GPU type, and connection endpoint.
 
 ```bash
-runpod-deploy list
+runpod-shell list
 ```
 
 ---
@@ -92,7 +92,7 @@ runpod-deploy list
 Stops a running pod (releases GPU resources, but retains the data on the persistent network volume).
 
 ```bash
-runpod-deploy stop <pod-id>
+runpod-shell stop <pod-id>
 ```
 
 ---
@@ -101,7 +101,7 @@ runpod-deploy stop <pod-id>
 Deletes a pod and releases all associated resources.
 
 ```bash
-runpod-deploy terminate <pod-id>
+runpod-shell terminate <pod-id>
 ```
 
 ---
@@ -110,7 +110,7 @@ runpod-deploy terminate <pod-id>
 Retrieves and lists all available GPU models, including display names, VRAM sizes, CUDA Cores, maximum GPU configurations, and hourly pricing (Secure vs. Community cloud).
 
 ```bash
-runpod-deploy gpus
+runpod-shell gpus
 ```
 
 ---
@@ -119,7 +119,7 @@ runpod-deploy gpus
 Uploads and executes an arbitrary local script on an active pod via SSH. Supports foreground streaming or detached background execution.
 
 ```bash
-runpod-deploy exec <pod-id> <script-path> [OPTIONS]
+runpod-shell exec <pod-id> <script-path> [OPTIONS]
 ```
 
 | Flag | Default | Description |
@@ -133,10 +133,10 @@ runpod-deploy exec <pod-id> <script-path> [OPTIONS]
 ---
 
 ### 7. `ps`
-Lists remote processes and background jobs managed by `runpod-deploy` on the pod, including Job ID, PID, running/completed/failed status, start time, duration, and log file path.
+Lists remote processes and background jobs managed by `runpod-shell` on the pod, including Job ID, PID, running/completed/failed status, start time, duration, and log file path.
 
 ```bash
-runpod-deploy ps <pod-id>
+runpod-shell ps <pod-id>
 ```
 
 ---
@@ -146,13 +146,13 @@ Inspects remote execution logs with full display (`cat`), tailing the last N lin
 
 ```bash
 # Display entire log (cat)
-runpod-deploy logs <pod-id> [job-id]
+runpod-shell logs <pod-id> [job-id]
 
 # Show last 100 lines
-runpod-deploy logs <pod-id> [job-id] -n 100
+runpod-shell logs <pod-id> [job-id] -n 100
 
 # Live follow log output (tail -f)
-runpod-deploy logs <pod-id> [job-id] -f
+runpod-shell logs <pod-id> [job-id] -f
 ```
 
 ---
@@ -161,7 +161,7 @@ runpod-deploy logs <pod-id> [job-id] -f
 Terminates a remote job and its entire process group using a signal (defaults to `SIGTERM`).
 
 ```bash
-runpod-deploy kill <pod-id> <job-id-or-pid> [--signal SIGKILL]
+runpod-shell kill <pod-id> <job-id-or-pid> [--signal SIGKILL]
 ```
 
 ---
@@ -170,17 +170,17 @@ runpod-deploy kill <pod-id> <job-id-or-pid> [--signal SIGKILL]
 
 ### Launch with default settings
 ```bash
-runpod-deploy create
+runpod-shell create
 ```
 
 ### Launch attaching a Network Volume and Python requirements
 ```bash
-runpod-deploy create --volume-id "vol-abc123xyz" --requirements-path requirements.txt
+runpod-shell create --volume-id "vol-abc123xyz" --requirements-path requirements.txt
 ```
 
 ### Launch and automatically run a script in the background
 ```bash
-runpod-deploy create \
+runpod-shell create \
   --volume-id "vol-abc123xyz" \
   --run-script ./train.py \
   --script-args "--epochs 50 --lr 1e-4" \
@@ -190,21 +190,21 @@ runpod-deploy create \
 ### Execute a script on an existing pod and follow logs
 ```bash
 # Run in background
-runpod-deploy exec pod-abc123xyz ./eval.py --script-args "--model best.pt" -d
+runpod-shell exec pod-abc123xyz ./eval.py --script-args "--model best.pt" -d
 
 # Check process status
-runpod-deploy ps pod-abc123xyz
+runpod-shell ps pod-abc123xyz
 
 # Follow live output
-runpod-deploy logs pod-abc123xyz -f
+runpod-shell logs pod-abc123xyz -f
 
 # Terminate if needed
-runpod-deploy kill pod-abc123xyz job-1757000000-a1b2c3
+runpod-shell kill pod-abc123xyz job-1757000000-a1b2c3
 ```
 
 ### Fully customized creation
 ```bash
-runpod-deploy create \
+runpod-shell create \
   --image-name "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-ubuntu22.04" \
   --gpu-type "NVIDIA RTX A6000" \
   --gpu-count 2 \

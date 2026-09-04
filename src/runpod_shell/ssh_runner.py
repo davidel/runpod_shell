@@ -183,7 +183,7 @@ echo "JOB_ID:{job_id}"
 
   if detach:
     print(f"\nScript is running in background.")
-    print(f"To monitor logs: runpod-deploy logs <pod-id> {job_id} -f")
+    print(f"To monitor logs: runpod-shell logs <pod-id> {job_id} -f")
     return {"job_id": job_id, "pid": pid, "log_file": log_file, "exit_code": 0}
 
   # Foreground mode: stream logs until completion
@@ -199,7 +199,7 @@ echo "JOB_ID:{job_id}"
     subprocess.run(tail_cmd)
   except KeyboardInterrupt:
     print(f"\nDetached from remote process {pid}. Job continues running in background.")
-    print(f"To re-attach: runpod-deploy logs <pod-id> {job_id} -f")
+    print(f"To re-attach: runpod-shell logs <pod-id> {job_id} -f")
     return {"job_id": job_id, "pid": pid, "log_file": log_file, "exit_code": 0}
 
   # Check final exit code

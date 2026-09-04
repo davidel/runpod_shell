@@ -8,10 +8,10 @@ from unittest.mock import patch, mock_open
 from pathlib import Path
 
 # Import the module under test
-import runpod_deploy.cli as cli
+import runpod_shell.cli as cli
 
 
-class TestRunPodDeployCLI(unittest.TestCase):
+class TestRunPodShellCLI(unittest.TestCase):
 
   @patch("pathlib.Path.exists", autospec=True)
   @patch("builtins.open", new_callable=mock_open, read_data="ssh-rsa AAAAB3...")
@@ -68,9 +68,9 @@ class TestRunPodDeployCLI(unittest.TestCase):
     packages = cli.read_apt_packages_file("apt.txt")
     self.assertEqual(packages, ["screen", "curl", "htop"])
 
-  @patch("runpod_deploy.cli.get_ssh_key")
-  @patch("runpod_deploy.cli.read_requirements")
-  @patch("runpod_deploy.cli.read_apt_packages_file")
+  @patch("runpod_shell.cli.get_ssh_key")
+  @patch("runpod_shell.cli.read_requirements")
+  @patch("runpod_shell.cli.read_apt_packages_file")
   @patch("runpod.create_pod")
   @patch("runpod.get_pod")
   @patch("time.sleep")
@@ -119,9 +119,9 @@ class TestRunPodDeployCLI(unittest.TestCase):
     self.assertIn('if [ -d "/workspace/venv" ] && [ -f "/root/.bashrc" ] && ! grep -q "source /workspace/venv/bin/activate" /root/.bashrc; then', docker_args)
     self.assertIn('echo "source /workspace/venv/bin/activate" >> /root/.bashrc', docker_args)
 
-  @patch("runpod_deploy.cli.get_ssh_key")
-  @patch("runpod_deploy.cli.read_requirements")
-  @patch("runpod_deploy.cli.read_apt_packages_file")
+  @patch("runpod_shell.cli.get_ssh_key")
+  @patch("runpod_shell.cli.read_requirements")
+  @patch("runpod_shell.cli.read_apt_packages_file")
   @patch("runpod.create_pod")
   @patch("runpod.get_pod")
   @patch("time.sleep")
@@ -206,11 +206,11 @@ class TestRunPodDeployCLI(unittest.TestCase):
       cli.main()
     mock_stdout.write.assert_any_call("RTX 4090                       | RTX 4090                  | 24        | N/A        | N/A | N/A     | N/A      ")
 
-  @patch("runpod_deploy.cli.execute_remote_script")
-  @patch("runpod_deploy.cli.find_ssh_private_key")
-  @patch("runpod_deploy.cli.get_ssh_key")
-  @patch("runpod_deploy.cli.read_requirements")
-  @patch("runpod_deploy.cli.read_apt_packages_file")
+  @patch("runpod_shell.cli.execute_remote_script")
+  @patch("runpod_shell.cli.find_ssh_private_key")
+  @patch("runpod_shell.cli.get_ssh_key")
+  @patch("runpod_shell.cli.read_requirements")
+  @patch("runpod_shell.cli.read_apt_packages_file")
   @patch("runpod.create_pod")
   @patch("runpod.get_pod")
   @patch("time.sleep")
@@ -253,7 +253,7 @@ class TestRunPodDeployCLI(unittest.TestCase):
         ssh_timeout=180
     )
 
-  @patch("runpod_deploy.cli.execute_remote_script")
+  @patch("runpod_shell.cli.execute_remote_script")
   @patch("runpod.get_pod")
   def test_exec_command(self, mock_get_pod, mock_exec):
     mock_get_pod.return_value = {
@@ -288,7 +288,7 @@ class TestRunPodDeployCLI(unittest.TestCase):
         ssh_timeout=180
     )
 
-  @patch("runpod_deploy.cli.list_remote_jobs")
+  @patch("runpod_shell.cli.list_remote_jobs")
   @patch("runpod.get_pod")
   @patch("sys.stdout")
   def test_ps_command(self, mock_stdout, mock_get_pod, mock_list_jobs):
@@ -322,7 +322,7 @@ class TestRunPodDeployCLI(unittest.TestCase):
 
     mock_list_jobs.assert_called_once_with("12.34.56.78", 12345, private_key_path=None)
 
-  @patch("runpod_deploy.cli.view_remote_logs")
+  @patch("runpod_shell.cli.view_remote_logs")
   @patch("runpod.get_pod")
   def test_logs_command(self, mock_get_pod, mock_view_logs):
     mock_get_pod.return_value = {
@@ -353,7 +353,7 @@ class TestRunPodDeployCLI(unittest.TestCase):
         private_key_path=None
     )
 
-  @patch("runpod_deploy.cli.kill_remote_job")
+  @patch("runpod_shell.cli.kill_remote_job")
   @patch("runpod.get_pod")
   def test_kill_command(self, mock_get_pod, mock_kill):
     mock_get_pod.return_value = {

@@ -6,7 +6,7 @@ import sys
 import time
 import runpod
 
-from runpod_deploy.ssh_runner import (
+from runpod_shell.ssh_runner import (
     find_ssh_private_key,
     execute_remote_script,
     list_remote_jobs,
@@ -543,7 +543,7 @@ def cmd_gpus(args):
 
 def main():
   parser = argparse.ArgumentParser(
-      prog="runpod-deploy",
+      prog="runpod-shell",
       description="Manage RunPod instances with optional persistent volume and custom environment setup."
   )
   parser.add_argument(

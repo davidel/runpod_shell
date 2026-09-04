@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "runpod-deploy"
+name = "runpod-shell"
 version = "0.1.0"
 description = "A Python command-line interface to manage RunPod instances"
 readme = "README.md"
@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.scripts]
-runpod-deploy = "runpod_deploy.cli:main"
+runpod-shell = "runpod_shell.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
