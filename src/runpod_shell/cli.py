@@ -289,7 +289,10 @@ def cmd_create(args):
 
   if template_id:
     create_args["template_id"] = template_id
-    create_args["image_name"] = ""
+    template = get_pod_template(template_id)
+    if not template or not template.get("imageName"):
+      fatal(f"Template '{template_id}' not found or does not specify an image name.", ValueError)
+    create_args["image_name"] = template["imageName"]
   else:
     create_args["image_name"] = image_name
 
@@ -523,10 +526,14 @@ def cmd_terminate(args):
     fatal(f"Failed to terminate pod: {e}", exc=e.__class__)
 
 
+def run_graphql(query):
+  from runpod.api.graphql import run_graphql_query
+  return run_graphql_query(query)
+
+
 def cmd_gpus(args):
   print("Fetching available GPU types...")
   try:
-    from runpod.api.graphql import run_graphql_query
     query = """
     query GpuTypes {
       gpuTypes {
@@ -539,7 +546,7 @@ def cmd_gpus(args):
       }
     }
     """
-    response = run_graphql_query(query)
+    response = run_graphql(query)
     gpus = response.get("data", {}).get("gpuTypes", [])
   except Exception:
     try:
@@ -583,9 +590,34 @@ def cmd_gpus(args):
     print(f"{gpu_id:<30} | {display_name:<25} | {ram:<9} | {max_gpus:<3} | {sec_price_str:<7} | {comm_price_str:<9}")
 
 
+def get_pod_template(template_id):
+  try:
+    query = f"""
+    query PodTemplate {{
+      podTemplate(id: "{template_id}") {{
+        id
+        name
+        imageName
+      }}
+    }}
+    """
+    response = run_graphql(query)
+    template = response.get("data", {}).get("podTemplate")
+    if template:
+      return template
+  except Exception:
+    pass
+
+  templates = get_pod_templates()
+  for t in templates:
+    if t.get("id") == template_id:
+      return t
+
+  return None
+
+
 def get_pod_templates():
   try:
-    from runpod.api.graphql import run_graphql_query
     query = """
     query PodTemplates {
       myself {
@@ -597,7 +629,7 @@ def get_pod_templates():
       }
     }
     """
-    response = run_graphql_query(query)
+    response = run_graphql(query)
     return response.get("data", {}).get("myself", {}).get("podTemplates", [])
   except Exception as e:
     fatal(f"Failed to retrieve templates: {e}", exc=e.__class__)

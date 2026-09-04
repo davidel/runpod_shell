@@ -548,16 +548,22 @@ class TestRunPodShellCLI(unittest.TestCase):
         ssh_config_path="/env/ssh/config"
     )
 
+  @patch("runpod_shell.cli.get_pod_template")
   @patch("runpod_shell.cli.get_ssh_key")
   @patch("runpod_shell.cli.read_requirements")
   @patch("runpod_shell.cli.read_apt_packages_file")
   @patch("runpod.create_pod")
   @patch("runpod.get_pod")
   @patch("time.sleep")
-  def test_create_with_template_id(self, mock_sleep, mock_get_pod, mock_create_pod, mock_apt_file, mock_req, mock_ssh_key):
+  def test_create_with_template_id(self, mock_sleep, mock_get_pod, mock_create_pod, mock_apt_file, mock_req, mock_ssh_key, mock_get_template):
     mock_ssh_key.return_value = "ssh-rsa fake_public_key"
     mock_req.return_value = ""
     mock_apt_file.return_value = []
+    mock_get_template.return_value = {
+        "id": "runpod-torch-v280",
+        "name": "Runpod Pytorch 2.8.0",
+        "imageName": "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404"
+    }
     mock_create_pod.return_value = {"id": "pod-123"}
     mock_get_pod.return_value = {
         "id": "pod-123",
@@ -583,18 +589,24 @@ class TestRunPodShellCLI(unittest.TestCase):
     kwargs = mock_create_pod.call_args[1]
     self.assertEqual(kwargs["name"], "test-template-worker")
     self.assertEqual(kwargs["template_id"], "runpod-torch-v280")
-    self.assertEqual(kwargs["image_name"], "")
+    self.assertEqual(kwargs["image_name"], "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404")
 
+  @patch("runpod_shell.cli.get_pod_template")
   @patch("runpod_shell.cli.get_ssh_key")
   @patch("runpod_shell.cli.read_requirements")
   @patch("runpod_shell.cli.read_apt_packages_file")
   @patch("runpod.create_pod")
   @patch("runpod.get_pod")
   @patch("time.sleep")
-  def test_create_template_id_precedence_over_image_name(self, mock_sleep, mock_get_pod, mock_create_pod, mock_apt_file, mock_req, mock_ssh_key):
+  def test_create_template_id_precedence_over_image_name(self, mock_sleep, mock_get_pod, mock_create_pod, mock_apt_file, mock_req, mock_ssh_key, mock_get_template):
     mock_ssh_key.return_value = "ssh-rsa fake_public_key"
     mock_req.return_value = ""
     mock_apt_file.return_value = []
+    mock_get_template.return_value = {
+        "id": "runpod-torch-v280",
+        "name": "Runpod Pytorch 2.8.0",
+        "imageName": "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404"
+    }
     mock_create_pod.return_value = {"id": "pod-123"}
     mock_get_pod.return_value = {
         "id": "pod-123",
@@ -621,7 +633,30 @@ class TestRunPodShellCLI(unittest.TestCase):
     kwargs = mock_create_pod.call_args[1]
     self.assertEqual(kwargs["name"], "test-precedence-worker")
     self.assertEqual(kwargs["template_id"], "runpod-torch-v280")
-    self.assertEqual(kwargs["image_name"], "")
+    self.assertEqual(kwargs["image_name"], "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404")
+
+  @patch("runpod_shell.cli.get_pod_template")
+  @patch("runpod_shell.cli.get_ssh_key")
+  @patch("runpod_shell.cli.read_requirements")
+  @patch("runpod_shell.cli.read_apt_packages_file")
+  def test_create_template_not_found_fails(self, mock_apt_file, mock_req, mock_ssh_key, mock_get_template):
+    mock_ssh_key.return_value = "ssh-rsa fake_public_key"
+    mock_req.return_value = ""
+    mock_apt_file.return_value = []
+    mock_get_template.return_value = None
+
+    test_args = [
+        "cli.py",
+        "--api-key", "fake-api-key",
+        "create",
+        "--name", "test-fail-worker",
+        "--template-id", "invalid-template"
+    ]
+
+    with patch.object(sys, "argv", test_args):
+      with self.assertRaises(ValueError) as ctx:
+        cli.main()
+      self.assertIn("Template 'invalid-template' not found", str(ctx.exception))
 
   @patch("runpod_shell.cli.get_ssh_key")
   @patch("runpod_shell.cli.read_requirements")
@@ -683,6 +718,38 @@ class TestRunPodShellCLI(unittest.TestCase):
     unmatched_lines = [line for line in calls if "runpod-ubuntu" in line]
     self.assertTrue(len(matched_lines) > 0)
     self.assertEqual(len(unmatched_lines), 0)
+
+  @patch("runpod_shell.cli.run_graphql")
+  def test_get_pod_template_direct(self, mock_graphql):
+    mock_graphql.return_value = {
+        "data": {
+            "podTemplate": {
+                "id": "runpod-torch-v280",
+                "name": "Runpod Pytorch 2.8.0",
+                "imageName": "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404"
+            }
+        }
+    }
+    template = cli.get_pod_template("runpod-torch-v280")
+    self.assertIsNotNone(template)
+    self.assertEqual(template["id"], "runpod-torch-v280")
+    self.assertEqual(template["imageName"], "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404")
+
+  @patch("runpod_shell.cli.get_pod_templates")
+  @patch("runpod_shell.cli.run_graphql")
+  def test_get_pod_template_fallback(self, mock_graphql, mock_get_templates):
+    mock_graphql.return_value = {"data": {"podTemplate": None}}
+    mock_get_templates.return_value = [
+        {
+            "id": "custom-template",
+            "name": "Custom",
+            "imageName": "custom/image:tag"
+        }
+    ]
+    template = cli.get_pod_template("custom-template")
+    self.assertIsNotNone(template)
+    self.assertEqual(template["id"], "custom-template")
+    self.assertEqual(template["imageName"], "custom/image:tag")
 
 
 if __name__ == "__main__":
