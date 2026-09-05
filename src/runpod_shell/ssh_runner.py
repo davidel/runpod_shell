@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 from pathlib import Path
@@ -161,7 +162,8 @@ def execute_remote_script(
     private_key_path=None,
     wait_for_setup_flag=True,
     ssh_timeout=180,
-    ssh_config_path=None
+    ssh_config_path=None,
+    extra_env=None
 ):
   local_path = Path(script_path).expanduser()
   if not local_path.exists():
@@ -183,9 +185,14 @@ def execute_remote_script(
   if upload_res.returncode != 0:
     raise RuntimeError(f"Failed to upload script via SCP: {upload_res.stderr.strip()}")
 
+  env_payload_line = ""
+  if extra_env:
+    env_json = json.dumps(extra_env)
+    env_b64 = base64.b64encode(env_json.encode("utf-8")).decode("ascii")
+    env_payload_line = f'export RUNPOD_JOB_ENV="{env_b64}"\n'
+
   # Launcher command on remote host
-  launcher_script = f"""
-chmod +x "{remote_script_path}"
+  launcher_script = f"""{env_payload_line}chmod +x "{remote_script_path}"
 BASE_DIR="/workspace"
 if [ ! -d "/workspace" ]; then
   BASE_DIR="/tmp"

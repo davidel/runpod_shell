@@ -1,5 +1,7 @@
 import json
+import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import unittest
@@ -276,6 +278,51 @@ class TestSSHRunner(unittest.TestCase):
     self.assertIn("-F", cmd)
     idx = cmd.index("-F")
     self.assertEqual(cmd[idx + 1], "/dev/null")
+
+  @patch("pathlib.Path.exists", autospec=True)
+  @patch("runpod_shell.ssh_runner.wait_for_ssh")
+  @patch("runpod_shell.ssh_runner.wait_for_setup")
+  @patch("subprocess.run")
+  def test_execute_remote_script_with_extra_env(self, mock_run, mock_wait_setup, mock_wait_ssh, mock_exists):
+    import base64
+    mock_exists.return_value = True
+
+    mock_run.side_effect = [
+        MagicMock(returncode=0, stdout="", stderr=""),
+        MagicMock(returncode=0, stdout="", stderr=""),
+        MagicMock(returncode=0, stdout="PID:12345\nLOG_FILE:/workspace/logs/job.log\nJOB_ID:job-1\n", stderr="")
+    ]
+
+    res = ssh_runner.execute_remote_script(
+        host="1.2.3.4",
+        port=22,
+        script_path="train.py",
+        detach=True,
+        extra_env={"R2_TOKEN": "secret_token", "DEBUG": "1"}
+    )
+
+    self.assertEqual(res["pid"], "12345")
+    launch_script = mock_run.call_args_list[2][0][0][-1]
+    self.assertIn("export RUNPOD_JOB_ENV=", launch_script)
+    m = re.search(r'export RUNPOD_JOB_ENV="([A-Za-z0-9+/=]+)"', launch_script)
+    self.assertIsNotNone(m)
+    decoded = json.loads(base64.b64decode(m.group(1)).decode("utf-8"))
+    self.assertEqual(decoded, {"R2_TOKEN": "secret_token", "DEBUG": "1"})
+
+  def test_runner_unpacks_job_env(self):
+    import base64
+    import runpod_shell.runner as runner
+    env_payload = {"MY_SECRET": "abc123xyz"}
+    b64_payload = base64.b64encode(json.dumps(env_payload).encode("utf-8")).decode("ascii")
+
+    with patch.dict("os.environ", {"RUNPOD_JOB_ENV": b64_payload}):
+      env = os.environ.copy()
+      job_env_b64 = env.pop("RUNPOD_JOB_ENV", None)
+      self.assertEqual(job_env_b64, b64_payload)
+      decoded = json.loads(base64.b64decode(job_env_b64).decode("utf-8"))
+      env.update(decoded)
+      self.assertEqual(env.get("MY_SECRET"), "abc123xyz")
+      self.assertNotIn("RUNPOD_JOB_ENV", env)
 
 
 if __name__ == "__main__":

@@ -416,7 +416,8 @@ class TestRunPodShellCLI(unittest.TestCase):
         private_key_path=None,
         wait_for_setup_flag=True,
         ssh_timeout=180,
-        ssh_config_path="/dev/null"
+        ssh_config_path="/dev/null",
+        extra_env=None
     )
 
   @patch("runpod_shell.cli.find_ssh_private_key")
@@ -559,7 +560,8 @@ class TestRunPodShellCLI(unittest.TestCase):
         private_key_path=None,
         wait_for_setup_flag=True,
         ssh_timeout=180,
-        ssh_config_path="/env/ssh/config"
+        ssh_config_path="/env/ssh/config",
+        extra_env=None
     )
 
   @patch("subprocess.run")
@@ -972,6 +974,78 @@ class TestRunPodShellCLI(unittest.TestCase):
     with self.assertRaises(RuntimeError) as ctx:
       cli.run_container_setup("1.2.3.4", 22, "#!/bin/bash\nexit 1")
     self.assertIn("Container setup failed with exit code: 1", str(ctx.exception))
+
+  def test_parse_env_explicit(self):
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-e", "--env", nargs="+", action=cli.ParseEnv, default={})
+    args = parser.parse_args(["-e", "FOO=bar", "BAZ=qux"])
+    self.assertEqual(args.env, {"FOO": "bar", "BAZ": "qux"})
+
+  def test_parse_env_from_local_environ(self):
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-e", "--env", nargs="+", action=cli.ParseEnv, default={})
+    with patch.dict("os.environ", {"MY_VAR": "secret_val"}):
+      args = parser.parse_args(["-e", "MY_VAR", "ANOTHER=123"])
+      self.assertEqual(args.env, {"MY_VAR": "secret_val", "ANOTHER": "123"})
+
+  def test_parse_env_missing_local_environ(self):
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-e", "--env", nargs="+", action=cli.ParseEnv, default={})
+    with patch.dict("os.environ", {}, clear=True):
+      with self.assertRaises(SystemExit):
+        with patch("sys.stderr"):
+          parser.parse_args(["-e", "NONEXISTENT_VAR"])
+
+  @patch("pathlib.Path.exists", autospec=True)
+  @patch("builtins.open", new_callable=mock_open, read_data="export API_KEY=\"secret\"\nDEBUG=true\n")
+  @patch("runpod_shell.cli.find_ssh_private_key")
+  @patch("runpod_shell.cli.execute_remote_script")
+  @patch("runpod.get_pod")
+  def test_exec_with_env_and_env_file(self, mock_get_pod, mock_exec, mock_find_priv, mock_file, mock_exists):
+    mock_exists.return_value = True
+    mock_find_priv.return_value = None
+    mock_get_pod.return_value = {
+        "id": "pod-123",
+        "runtime": {
+            "ports": [{"privatePort": 22, "publicPort": 12345, "ip": "12.34.56.78"}]
+        }
+    }
+    mock_exec.return_value = {"job_id": "job-1", "pid": "123", "exit_code": 0}
+
+    test_args = [
+        "cli.py",
+        "--api-key", "fake-api-key",
+        "exec",
+        "pod-123",
+        "script.sh",
+        "--env-file", ".env",
+        "-e", "LOCAL_VAR", "OVERRIDE=custom"
+    ]
+
+    with patch.dict("os.environ", {"LOCAL_VAR": "local_value"}):
+      with patch.object(sys, "argv", test_args):
+        cli.main()
+
+    mock_exec.assert_called_once_with(
+        host="12.34.56.78",
+        port=12345,
+        script_path="script.sh",
+        script_args="",
+        detach=False,
+        private_key_path=None,
+        wait_for_setup_flag=True,
+        ssh_timeout=180,
+        ssh_config_path=None,
+        extra_env={
+            "API_KEY": "secret",
+            "DEBUG": "true",
+            "LOCAL_VAR": "local_value",
+            "OVERRIDE": "custom"
+        }
+    )
 
 
 if __name__ == "__main__":

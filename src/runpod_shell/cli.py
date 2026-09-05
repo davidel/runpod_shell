@@ -25,13 +25,24 @@ from runpod_shell.ssh_runner import (
 class ParseEnv(argparse.Action):
 
   def __call__(self, parser, namespace, values, option_string=None):
-    env_dict = getattr(namespace, self.dest) or {}
+    env_dict = getattr(namespace, self.dest)
+    if env_dict is None or not isinstance(env_dict, dict):
+      env_dict = {}
     for val in values:
       if '=' in val:
         k, v = val.split('=', 1)
+        k = k.strip()
+        if not k:
+          parser.error(f"Invalid environment variable format: '{val}'. Key cannot be empty.")
         env_dict[k] = v
       else:
-        parser.error(f"Invalid environment variable format: {val}. Expected KEY=VALUE.")
+        k = val.strip()
+        if not k:
+          parser.error(f"Invalid environment variable format: '{val}'. Key cannot be empty.")
+        if k in os.environ:
+          env_dict[k] = os.environ[k]
+        else:
+          parser.error(f"Environment variable '{k}' is not set in the local environment.")
     setattr(namespace, self.dest, env_dict)
 
 
@@ -93,10 +104,14 @@ def parse_env_file(file_path_str):
       # Skip comments and empty lines
       if not line or line.startswith("#"):
         continue
+      if line.startswith("export "):
+        line = line[7:].strip()
       if "=" in line:
         k, v = line.split("=", 1)
         k = k.strip()
-        v = v.strip().strip("'\"")
+        v = v.strip()
+        if len(v) >= 2 and ((v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'"))):
+          v = v[1:-1]
         env_dict[k] = v
   return env_dict
 
@@ -489,6 +504,18 @@ def cmd_exec(args):
   priv_key = find_ssh_private_key(None, getattr(args, "ssh_private_key_path", None))
   wait_setup = not getattr(args, "no_wait_for_setup", False)
 
+  # Resolve environment variables
+  extra_env = {}
+  env_files = getattr(args, "env_files", None) or []
+  if isinstance(env_files, str):
+    env_files = [env_files]
+  for ef in env_files:
+    if ef:
+      extra_env.update(parse_env_file(ef))
+
+  if getattr(args, "env", None):
+    extra_env.update(args.env)
+
   res = execute_remote_script(
       host=ssh_host,
       port=ssh_port,
@@ -498,7 +525,8 @@ def cmd_exec(args):
       private_key_path=priv_key,
       wait_for_setup_flag=wait_setup,
       ssh_timeout=getattr(args, "ssh_timeout", 180),
-      ssh_config_path=getattr(args, "ssh_config", None)
+      ssh_config_path=getattr(args, "ssh_config", None),
+      extra_env=extra_env if extra_env else None
   )
   if not getattr(args, "detach", False) and res.get("exit_code", 0) != 0:
     sys.exit(res["exit_code"])
@@ -1014,6 +1042,23 @@ def main():
       type=int,
       default=180,
       help="Max seconds to wait for SSH and setup readiness (default: %(default)s)"
+  )
+  exec_parser.add_argument(
+      "-e",
+      "--env",
+      dest="env",
+      nargs="+",
+      action=ParseEnv,
+      default={},
+      help="Environment variable to set for the remote script (KEY=VALUE or KEY to extract from local environment). Can be specified multiple times."
+  )
+  exec_parser.add_argument(
+      "--env-file",
+      "--env_file",
+      dest="env_files",
+      action="append",
+      default=[],
+      help="Path to a file containing environment variables (KEY=VALUE format). Can be specified multiple times."
   )
 
   # Ps Command

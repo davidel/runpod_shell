@@ -7,6 +7,7 @@ events, and manage job lifecycles.
 """
 
 import argparse
+import base64
 import datetime
 import json
 import os
@@ -73,6 +74,15 @@ def cmd_run(args):
   # Prepare environment
   env = os.environ.copy()
   env["PIP_BREAK_SYSTEM_PACKAGES"] = "1"
+  job_env_b64 = env.pop("RUNPOD_JOB_ENV", None)
+  if job_env_b64:
+    try:
+      job_env_data = json.loads(base64.b64decode(job_env_b64).decode("utf-8"))
+      if isinstance(job_env_data, dict):
+        env.update(job_env_data)
+    except Exception as e:
+      print(f"WARNING: Failed to decode RUNPOD_JOB_ENV payload: {e}", file=sys.stderr)
+
   python_executable = shutil.which("python3") or shutil.which("python") or "python3"
 
   # Log job start header
