@@ -158,8 +158,19 @@ class TestSSHRunner(unittest.TestCase):
     ssh_runner.view_remote_logs("1.2.3.4", 22, job_id="job-1", follow=True)
     mock_run.assert_called_once()
     called_cmd = mock_run.call_args[0][0]
-    self.assertIn("-t", called_cmd)
+    self.assertNotIn("-t", called_cmd)
     self.assertIn("tail -n 50 -f '/workspace/logs/job-1.log'", called_cmd)
+
+  @patch("runpod_shell.ssh_runner.list_remote_jobs")
+  @patch("subprocess.run")
+  def test_view_remote_logs_keyboard_interrupt(self, mock_run, mock_list):
+    mock_list.return_value = [
+        {"job_id": "job-1", "log_file": "/workspace/logs/job-1.log"}
+    ]
+    mock_run.side_effect = KeyboardInterrupt
+    # Should handle KeyboardInterrupt gracefully without raising
+    ssh_runner.view_remote_logs("1.2.3.4", 22, job_id="job-1", follow=True)
+    mock_run.assert_called_once()
 
   @patch("runpod_shell.ssh_runner.list_remote_jobs")
   @patch("subprocess.run")

@@ -347,16 +347,23 @@ def view_remote_logs(host, port, job_id=None, tail_lines=None, follow=False, pri
   if follow:
     n = tail_lines if tail_lines else 50
     remote_cmd = f"tail -n {n} -f '{log_file}'"
-    tty = True
   elif tail_lines:
     remote_cmd = f"tail -n {tail_lines} '{log_file}'"
-    tty = False
   else:
     remote_cmd = f"cat '{log_file}'"
-    tty = False
 
-  cmd = build_ssh_cmd(host, port, remote_cmd, private_key_path=private_key_path, tty=tty, ssh_config_path=ssh_config_path)
-  subprocess.run(cmd)
+  cmd = build_ssh_cmd(
+      host,
+      port,
+      remote_cmd,
+      private_key_path=private_key_path,
+      tty=False,
+      ssh_config_path=ssh_config_path
+  )
+  try:
+    subprocess.run(cmd)
+  except KeyboardInterrupt:
+    print("\nDetached from log stream.")
 
 
 def kill_remote_job(host, port, target_id, signal_name="SIGTERM", private_key_path=None, ssh_config_path=None):
