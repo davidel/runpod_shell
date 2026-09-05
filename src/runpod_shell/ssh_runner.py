@@ -150,13 +150,14 @@ LOG_FILE="$LOGS_DIR/{job_id}_{local_path.name}.log"
 
 cat <<'EOF' > "$JOBS_DIR/runner.sh"
 #!/bin/bash
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ -f /workspace/venv/bin/activate ]; then
   source /workspace/venv/bin/activate
 fi
 cd /workspace 2>/dev/null || cd /tmp
 "{remote_script_path}" {script_args}
 EXIT_CODE=$?
-echo $EXIT_CODE > "$JOBS_DIR/exit_code"
+echo $EXIT_CODE > "$SCRIPT_DIR/exit_code"
 exit $EXIT_CODE
 EOF
 
@@ -211,7 +212,7 @@ echo "JOB_ID:{job_id}"
   tail_cmd = build_ssh_cmd(
       host,
       port,
-      f"tail -n +1 --pid={pid} -f '{log_file}' 2>/dev/null || tail -n +1 -f '{log_file}'",
+      f"tail -n +1 -s 0.2 --pid={pid} -f '{log_file}' 2>/dev/null || tail -n +1 -f '{log_file}'",
       private_key_path=private_key_path,
       ssh_config_path=ssh_config_path
   )

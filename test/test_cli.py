@@ -913,7 +913,9 @@ class TestRunPodShellCLI(unittest.TestCase):
             "id": "pod-123",
             "name": "my-worker",
             "desiredStatus": "RUNNING",
-            "gpuName": "RTX 4090",
+            "machine": {
+                "gpuDisplayName": "RTX 4090"
+            },
             "gpuCount": 1,
             "runtime": {
                 "ports": [
@@ -932,6 +934,7 @@ class TestRunPodShellCLI(unittest.TestCase):
     calls = [call[0][0] for call in mock_stdout.write.call_args_list if call[0]]
     output = "".join(calls)
     self.assertIn("1.2.3.4:54321", output)
+    self.assertIn("1x RTX 4090", output)
 
   @patch("runpod_shell.cli.get_ssh_key")
   @patch("runpod_shell.cli.read_requirements")

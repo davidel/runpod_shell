@@ -637,7 +637,14 @@ def cmd_list(args):
     status = p.get("desiredStatus") or p.get("status", "N/A")
 
     # Extract GPU info
-    gpu_type = p.get("gpuName") or p.get("gpuTypeId") or "CPU"
+    machine_info = p.get("machine") or {}
+    gpu_type = (
+        machine_info.get("gpuDisplayName")
+        or p.get("gpuDisplayName")
+        or p.get("gpuName")
+        or p.get("gpuTypeId")
+        or "GPU"
+    )
     gpu_count = p.get("gpuCount", 0)
     if gpu_count > 0:
       gpu_display = f"{gpu_count}x {gpu_type}"

@@ -104,6 +104,9 @@ class TestSSHRunner(unittest.TestCase):
     self.assertEqual(res["pid"], "12345")
     self.assertEqual(res["log_file"], "/workspace/logs/job.log")
     self.assertEqual(res["exit_code"], 0)
+    launch_script = mock_run.call_args_list[1][0][0][-1]
+    self.assertIn('SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"', launch_script)
+    self.assertIn('echo $EXIT_CODE > "$SCRIPT_DIR/exit_code"', launch_script)
 
   @patch("pathlib.Path.exists", autospec=True)
   @patch("runpod_shell.ssh_runner.wait_for_ssh")
@@ -132,6 +135,8 @@ class TestSSHRunner(unittest.TestCase):
 
     self.assertEqual(res["pid"], "12345")
     self.assertEqual(res["exit_code"], 0)
+    tail_script = mock_run.call_args_list[2][0][0][-1]
+    self.assertIn("-s 0.2", tail_script)
 
   @patch("subprocess.run")
   def test_list_remote_jobs(self, mock_run):
