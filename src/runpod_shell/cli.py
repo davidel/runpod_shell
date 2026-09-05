@@ -365,6 +365,7 @@ def cmd_create(args):
       "gpu_count": args.gpu_count,
       "container_disk_in_gb": args.container_disk_size,
       "volume_in_gb": args.volume_size,
+      "volume_mount_path": args.volume_mount_path,
       "ports": args.ports,
       "env": container_env,
       "cloud_type": args.cloud_type,
@@ -386,7 +387,6 @@ def cmd_create(args):
 
   if args.volume_id:
     create_args["network_volume_id"] = args.volume_id
-    create_args["volume_mount_path"] = args.volume_mount_path
 
   try:
     pod = runpod.create_pod(**create_args)
@@ -933,7 +933,7 @@ def main():
       "--volume_mount_path",
       default="/workspace",
       dest="volume_mount_path",
-      help="Path inside the container where the network volume is mounted (default: %(default)s)"
+      help="Path inside the container where the volume is mounted (default: %(default)s)"
   )
   create_parser.add_argument(
       "--vcpu-count",

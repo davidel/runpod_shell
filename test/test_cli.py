@@ -118,6 +118,7 @@ class TestRunPodShellCLI(unittest.TestCase):
     self.assertEqual(kwargs["gpu_count"], 1)
     self.assertEqual(kwargs["min_vcpu_count"], 4)
     self.assertEqual(kwargs["min_memory_in_gb"], 8)
+    self.assertEqual(kwargs["volume_mount_path"], "/workspace")
     self.assertNotIn("docker_args", kwargs)
 
     mock_wait_ssh.assert_called_once()
@@ -851,6 +852,42 @@ class TestRunPodShellCLI(unittest.TestCase):
     mock_create_pod.assert_called_once()
     kwargs = mock_create_pod.call_args[1]
     self.assertEqual(kwargs.get("docker_args"), "bash -c 'sleep 3600'")
+
+  @patch("subprocess.run")
+  @patch("runpod_shell.cli.wait_for_ssh")
+  @patch("runpod_shell.cli.get_ssh_key")
+  @patch("runpod_shell.cli.read_requirements")
+  @patch("runpod_shell.cli.read_apt_packages_file")
+  @patch("runpod.create_pod")
+  @patch("runpod.get_pod")
+  @patch("time.sleep")
+  def test_create_with_custom_volume_mount_path(self, mock_sleep, mock_get_pod, mock_create_pod, mock_apt_file, mock_req, mock_ssh_key, mock_wait_ssh, mock_sub_run):
+    mock_ssh_key.return_value = "ssh-rsa fake_public_key"
+    mock_req.return_value = ""
+    mock_apt_file.return_value = []
+    mock_create_pod.return_value = {"id": "pod-123"}
+    mock_get_pod.return_value = {
+        "id": "pod-123",
+        "desiredStatus": "RUNNING",
+        "runtime": {
+            "ports": [{"privatePort": 22, "publicPort": 12345, "ip": "12.34.56.78"}]
+        }
+    }
+    test_args = [
+        "cli.py",
+        "--api-key", "fake-api-key",
+        "create",
+        "--name", "test-custom-mount",
+        "--image-name", "custom/image:tag",
+        "--volume-size", "150",
+        "--volume-mount-path", "/custom/mount"
+    ]
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+    mock_create_pod.assert_called_once()
+    kwargs = mock_create_pod.call_args[1]
+    self.assertEqual(kwargs.get("volume_in_gb"), 150)
+    self.assertEqual(kwargs.get("volume_mount_path"), "/custom/mount")
 
   def test_get_pod_ssh_endpoint_graphql_fields(self):
     pod_info = {
