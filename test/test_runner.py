@@ -155,6 +155,68 @@ class TestRunnerScript(unittest.TestCase):
       jobs2 = json.loads(list_res2.stdout)
       self.assertEqual(jobs2[0]["status"], "KILLED")
 
+  def test_runner_kill_timeout_escalation(self):
+    with tempfile.TemporaryDirectory() as td:
+      tdp = Path(td)
+      script = tdp / "stubborn.py"
+      script.write_text(
+          "#!/usr/bin/env python3\n"
+          "import signal, time\n"
+          "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+          "time.sleep(30)\n"
+      )
+
+      job_dir = tdp / ".runpod_jobs" / "kill-stubborn"
+      log_file = tdp / "logs" / "kill-stubborn.log"
+      log_file.parent.mkdir(parents=True, exist_ok=True)
+
+      with open(log_file, "w") as lf:
+        proc = subprocess.Popen([
+            sys.executable,
+            str(RUNNER_PATH),
+            "run",
+            "--job-id", "kill-stubborn",
+            "--script", str(script),
+            "--job-dir", str(job_dir),
+            "--log-file", str(log_file),
+            "--work-dir", str(tdp)
+        ], stdout=lf, stderr=subprocess.STDOUT, start_new_session=True)
+
+      time.sleep(0.5)
+
+      # Check running
+      list_res = subprocess.run([
+          sys.executable,
+          str(RUNNER_PATH),
+          "list",
+          "--base-dir", str(tdp / ".runpod_jobs")
+      ], capture_output=True, text=True)
+      jobs = json.loads(list_res.stdout)
+      self.assertEqual(jobs[0]["status"], "RUNNING")
+
+      # Kill with 0.5s timeout to trigger SIGKILL escalation
+      kill_res = subprocess.run([
+          sys.executable,
+          str(RUNNER_PATH),
+          "kill",
+          "--target", "kill-stubborn",
+          "--timeout", "0.5",
+          "--base-dir", str(tdp / ".runpod_jobs")
+      ], capture_output=True, text=True)
+
+      self.assertEqual(kill_res.stdout.strip(), "KILLED_SIGKILL")
+      proc.wait(timeout=5)
+
+      # Check killed status
+      list_res2 = subprocess.run([
+          sys.executable,
+          str(RUNNER_PATH),
+          "list",
+          "--base-dir", str(tdp / ".runpod_jobs")
+      ], capture_output=True, text=True)
+      jobs2 = json.loads(list_res2.stdout)
+      self.assertEqual(jobs2[0]["status"], "KILLED")
+
   def test_runner_run_script_without_shebang(self):
     with tempfile.TemporaryDirectory() as td:
       tdp = Path(td)

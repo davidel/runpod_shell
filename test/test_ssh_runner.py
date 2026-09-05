@@ -213,6 +213,21 @@ class TestSSHRunner(unittest.TestCase):
     self.assertIn("SIGKILL", called_cmd[-1])
     self.assertIn("python3 /tmp/.runpod_runner.py kill", called_cmd[-1])
 
+  @patch("builtins.print")
+  @patch("subprocess.run")
+  def test_kill_remote_job_timeout_escalation(self, mock_run, mock_print):
+    mock_run.side_effect = [
+        MagicMock(returncode=0, stdout="", stderr=""),
+        MagicMock(returncode=0, stdout="KILLED_SIGKILL\n", stderr="")
+    ]
+    ssh_runner.kill_remote_job("1.2.3.4", 22, "job-1", signal_name="SIGTERM", timeout=5.0)
+    self.assertEqual(mock_run.call_count, 2)
+    called_cmd = mock_run.call_args_list[1][0][0]
+    self.assertIn("--timeout 5.0", called_cmd[-1])
+    mock_print.assert_any_call(
+        "Graceful termination timed out after 5.0s; sent SIGKILL to process job-1 and its process group."
+    )
+
   @patch("subprocess.run")
   def test_ensure_remote_runner(self, mock_run):
     mock_run.return_value = MagicMock(returncode=0)

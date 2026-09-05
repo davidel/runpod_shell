@@ -522,6 +522,41 @@ class TestRunPodShellCLI(unittest.TestCase):
         port=12345,
         target_id="job-1",
         signal_name="SIGKILL",
+        timeout=15.0,
+        private_key_path=None,
+        ssh_config_path="/dev/null"
+    )
+
+  @patch("runpod_shell.cli.find_ssh_private_key")
+  @patch("runpod_shell.cli.kill_remote_job")
+  @patch("runpod.get_pod")
+  def test_kill_command_custom_timeout(self, mock_get_pod, mock_kill, mock_find_priv):
+    mock_find_priv.return_value = None
+    mock_get_pod.return_value = {
+        "id": "pod-123",
+        "runtime": {
+            "ports": [{"privatePort": 22, "isExternal": 12345, "address": "12.34.56.78"}]
+        }
+    }
+
+    test_args = [
+        "runpod-shell",
+        "kill",
+        "pod-123",
+        "job-1",
+        "-t", "5.5",
+        "--ssh-config", "/dev/null"
+    ]
+
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+
+    mock_kill.assert_called_once_with(
+        host="12.34.56.78",
+        port=12345,
+        target_id="job-1",
+        signal_name="SIGTERM",
+        timeout=5.5,
         private_key_path=None,
         ssh_config_path="/dev/null"
     )

@@ -39,6 +39,53 @@ def format_duration(seconds):
   return f"{mins}m {secs}s"
 
 
+def is_pid_alive(pid):
+  try:
+    p_int = int(pid)
+    if p_int <= 1:
+      return False
+    os.kill(p_int, 0)
+  except (OSError, ValueError, TypeError):
+    return False
+  try:
+    with open(f"/proc/{p_int}/status", "r") as f:
+      for line in f:
+        if line.startswith("State:"):
+          return "Z" not in line and "X" not in line
+  except (IOError, OSError):
+    pass
+  return True
+
+
+def is_pgid_alive(pgid):
+  if pgid <= 1:
+    return False
+  if not os.path.exists("/proc"):
+    try:
+      os.killpg(pgid, 0)
+      return True
+    except OSError:
+      return False
+  try:
+    for entry in os.scandir("/proc"):
+      if entry.name.isdigit():
+        try:
+          with open(os.path.join(entry.path, "stat"), "r") as f:
+            content = f.read()
+          idx = content.rfind(")")
+          if idx != -1:
+            rest = content[idx + 2:].split()
+            state = rest[0]
+            pgrp = int(rest[2])
+            if pgrp == pgid and state not in ("Z", "X"):
+              return True
+        except (IOError, OSError, IndexError, ValueError):
+          continue
+  except OSError:
+    pass
+  return False
+
+
 def cmd_run(args):
   job_dir = Path(args.job_dir)
   job_dir.mkdir(parents=True, exist_ok=True)
@@ -263,19 +310,10 @@ def cmd_list(args):
       pid = data.get("pid")
       child_pid = data.get("child_pid")
       is_running = False
-      if pid:
-        try:
-          os.kill(int(pid), 0)
-          is_running = True
-        except OSError:
-          is_running = False
-
-      if not is_running and child_pid:
-        try:
-          os.kill(int(child_pid), 0)
-          is_running = True
-        except OSError:
-          is_running = False
+      if pid and is_pid_alive(pid):
+        is_running = True
+      elif child_pid and is_pid_alive(child_pid):
+        is_running = True
 
       exit_code_file = entry / "exit_code"
       killed_file = entry / "killed"
@@ -356,38 +394,86 @@ def cmd_kill(args):
     if target_job_dir:
       break
 
+  timeout = float(getattr(args, "timeout", 15.0) or 15.0)
+
   if not target_pid:
     target_pid = target_id
 
-  killed_any = False
-
-  # Try child process first (and its process group), then supervisor
+  pids_to_kill = []
   for p_str in (target_child_pid, target_pid):
     if not p_str:
       continue
     try:
       p_int = int(p_str)
+      if p_int > 1 and p_int not in pids_to_kill:
+        pids_to_kill.append(p_int)
     except ValueError:
       continue
 
-    try:
-      os.kill(p_int, 0)
-    except OSError:
-      continue
+  my_pgid = os.getpgrp()
 
-    killed_any = True
-    my_pgid = os.getpgrp()
+  pgids_to_kill = set()
+  for p in pids_to_kill:
     try:
-      pgid = os.getpgid(p_int)
+      pgid = os.getpgid(p)
       if pgid > 1 and pgid != my_pgid:
-        os.killpg(pgid, sig_num)
-      else:
-        os.kill(p_int, sig_num)
+        pgids_to_kill.add(pgid)
     except OSError:
+      pass
+
+  if target_child_pid:
+    try:
+      c_int = int(target_child_pid)
+      if c_int > 1 and c_int != my_pgid:
+        pgids_to_kill.add(c_int)
+    except ValueError:
+      pass
+
+  def is_any_alive():
+    for p in pids_to_kill:
+      if is_pid_alive(p):
+        return True
+    for pgid in pgids_to_kill:
+      if is_pgid_alive(pgid):
+        return True
+    return False
+
+  def send_to_targets(signum):
+    sent = False
+    for pgid in pgids_to_kill:
       try:
-        os.kill(p_int, sig_num)
+        os.killpg(pgid, signum)
+        sent = True
       except OSError:
         pass
+    for p in pids_to_kill:
+      if p != os.getpid():
+        try:
+          os.kill(p, signum)
+          sent = True
+        except OSError:
+          pass
+    return sent
+
+  if not is_any_alive():
+    print("NOT_RUNNING")
+    return
+
+  send_to_targets(sig_num)
+  killed_via_sigkill = False
+
+  # If signal was SIGTERM, wait up to timeout seconds, then escalate to SIGKILL
+  if sig_name in ("SIGTERM", "15") and timeout > 0:
+    start_wait = time.time()
+    while time.time() - start_wait < timeout:
+      if not is_any_alive():
+        break
+      time.sleep(0.2)
+    else:
+      if is_any_alive():
+        send_to_targets(signal.SIGKILL)
+        killed_via_sigkill = True
+        time.sleep(0.1)
 
   if target_job_dir and target_job_dir.exists():
     try:
@@ -406,10 +492,10 @@ def cmd_kill(args):
     except Exception:
       pass
 
-  if killed_any:
-    print("KILLED")
+  if killed_via_sigkill:
+    print("KILLED_SIGKILL")
   else:
-    print("NOT_RUNNING")
+    print("KILLED")
 
 
 def main():
@@ -430,6 +516,7 @@ def main():
   kill_p = subparsers.add_parser("kill")
   kill_p.add_argument("--target", required=True)
   kill_p.add_argument("--signal", default="SIGTERM")
+  kill_p.add_argument("--timeout", type=float, default=15.0)
   kill_p.add_argument("--base-dir", default=None)
 
   args = parser.parse_args()

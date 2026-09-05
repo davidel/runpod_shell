@@ -352,14 +352,16 @@ def view_remote_logs(host, port, job_id=None, tail_lines=None, follow=False, pri
     print("\nDetached from log stream.")
 
 
-def kill_remote_job(host, port, target_id, signal_name="SIGTERM", private_key_path=None, ssh_config_path=None):
+def kill_remote_job(host, port, target_id, signal_name="SIGTERM", timeout=15.0, private_key_path=None, ssh_config_path=None):
   ensure_remote_runner(host, port, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
-  kill_cmd = f"python3 {REMOTE_RUNNER_PATH} kill --target {shlex.quote(str(target_id))} --signal {shlex.quote(signal_name)}"
+  kill_cmd = f"python3 {REMOTE_RUNNER_PATH} kill --target {shlex.quote(str(target_id))} --signal {shlex.quote(signal_name)} --timeout {float(timeout)}"
   cmd = build_ssh_cmd(host, port, kill_cmd, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
   res = subprocess.run(cmd, capture_output=True, text=True)
   output = res.stdout.strip()
 
-  if "KILLED" in output:
+  if "KILLED_SIGKILL" in output:
+    print(f"Graceful termination timed out after {timeout:.1f}s; sent SIGKILL to process {target_id} and its process group.")
+  elif "KILLED" in output:
     print(f"Signal {signal_name} sent to process {target_id} and its process group.")
   elif "NOT_RUNNING" in output:
     print(f"Process {target_id} was not running.")
