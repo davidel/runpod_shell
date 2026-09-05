@@ -141,64 +141,39 @@ def build_container_setup_script(apt_packages, requirements_content, pip_package
         'log "Apt packages installed successfully."'
     ])
 
+  if requirements_content.strip() or pip_packages_str:
+    lines.extend([
+        'log "Configuring system pip for container environment..."',
+        'mkdir -p /etc',
+        'cat <<\'EOF\' > /etc/pip.conf',
+        '[global]',
+        'break-system-packages = true',
+        'EOF',
+        'export PIP_BREAK_SYSTEM_PACKAGES=1',
+        'if [ -f /etc/environment ] && ! grep -q "PIP_BREAK_SYSTEM_PACKAGES" /etc/environment 2>/dev/null; then',
+        '  echo "PIP_BREAK_SYSTEM_PACKAGES=1" >> /etc/environment',
+        'fi',
+        'if [ -f /root/.profile ] && ! grep -q "PIP_BREAK_SYSTEM_PACKAGES" /root/.profile 2>/dev/null; then',
+        '  echo "export PIP_BREAK_SYSTEM_PACKAGES=1" >> /root/.profile',
+        'fi',
+        'if [ -f /root/.bashrc ] && ! grep -q "PIP_BREAK_SYSTEM_PACKAGES" /root/.bashrc 2>/dev/null; then',
+        '  echo "export PIP_BREAK_SYSTEM_PACKAGES=1" >> /root/.bashrc',
+        'fi'
+    ])
+
   escaped_requirements = requirements_content.replace("'", "'\\''")
   if requirements_content.strip():
     lines.extend([
         'log "Writing requirements.txt..."',
-        f"echo '{escaped_requirements}' > \"{volume_mount_path}/requirements.txt\""
+        f"echo '{escaped_requirements}' > \"{volume_mount_path}/requirements.txt\"",
+        f'log "Installing packages from {volume_mount_path}/requirements.txt..."',
+        f'pip install -r "{volume_mount_path}/requirements.txt"'
     ])
 
-  if requirements_content.strip() or pip_packages_str:
-    venv_dir = f"{volume_mount_path}/venv"
-    sentinel = f"{venv_dir}/.setup_complete"
-    install_pip = f'"{venv_dir}/bin/pip" install {pip_packages_str}' if pip_packages_str else "true"
-
+  if pip_packages_str:
     lines.extend([
-        f'VENV_DIR="{venv_dir}"',
-        f'SENTINEL="{sentinel}"',
-        'if [ -d "$VENV_DIR" ] && [ ! -f "$SENTINEL" ]; then',
-        '  log "Warning: Found incomplete or broken virtual environment. Cleaning up..."',
-        '  rm -rf "$VENV_DIR"',
-        "fi",
-        'if [ ! -d "$VENV_DIR" ]; then',
-        '  log "Creating fresh virtual environment on Volume at $VENV_DIR..."',
-        '  python3 -m venv "$VENV_DIR"',
-        '  log "Upgrading pip in virtual environment..."',
-        '  "$VENV_DIR/bin/pip" install --upgrade pip'
-    ])
-
-    if requirements_content.strip():
-      lines.extend([
-          f'  if [ -f "{volume_mount_path}/requirements.txt" ]; then',
-          f'    log "Installing packages from {volume_mount_path}/requirements.txt..."',
-          f'    "$VENV_DIR/bin/pip" install -r "{volume_mount_path}/requirements.txt"',
-          "  fi"
-      ])
-
-    if pip_packages_str:
-      lines.extend([
-          f'  log "Installing command-line pip packages: {pip_packages_str}..."',
-          f"  {install_pip}"
-      ])
-
-    lines.extend([
-        '  touch "$SENTINEL"',
-        '  log "Virtual environment setup complete."',
-        "else",
-        '  log "Found existing healthy virtual environment."'
-    ])
-
-    if pip_packages_str:
-      lines.extend([
-          f'  log "Installing command-line pip packages: {pip_packages_str}..."',
-          f"  {install_pip}"
-      ])
-
-    lines.extend([
-        "fi",
-        'if [ -d "$VENV_DIR" ] && [ -f "/root/.bashrc" ] && ! grep -q "source $VENV_DIR/bin/activate" /root/.bashrc; then',
-        '  echo "source $VENV_DIR/bin/activate" >> /root/.bashrc',
-        "fi"
+        f'log "Installing command-line pip packages: {pip_packages_str}..."',
+        f'pip install {pip_packages_str}'
     ])
 
   lines.extend([

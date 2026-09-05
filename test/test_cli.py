@@ -126,7 +126,10 @@ class TestRunPodShellCLI(unittest.TestCase):
     setup_kwargs = mock_setup.call_args[1]
     setup_script = setup_kwargs["setup_script_content"]
     self.assertIn("echo 'importlib-metadata==6.7.0; python_version < '\\''3.8'\\''' > \"/workspace/requirements.txt\"", setup_script)
-    self.assertIn('echo "source $VENV_DIR/bin/activate" >> /root/.bashrc', setup_script)
+    self.assertIn("break-system-packages = true", setup_script)
+    self.assertIn('pip install -r "/workspace/requirements.txt"', setup_script)
+    self.assertIn("pip install scipy", setup_script)
+    self.assertNotIn("venv", setup_script.lower())
 
   @patch("subprocess.run")
   @patch("runpod_shell.cli.wait_for_ssh")

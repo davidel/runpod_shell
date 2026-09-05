@@ -70,17 +70,10 @@ def cmd_run(args):
   if args.work_dir and os.path.isdir(args.work_dir):
     work_dir = Path(args.work_dir)
 
-  venv_bin = None
-  if os.path.isdir("/workspace/venv/bin"):
-    venv_bin = Path("/workspace/venv/bin")
-
   # Prepare environment
   env = os.environ.copy()
+  env["PIP_BREAK_SYSTEM_PACKAGES"] = "1"
   python_executable = shutil.which("python3") or shutil.which("python") or "python3"
-  if venv_bin:
-    env["VIRTUAL_ENV"] = str(venv_bin.parent)
-    env["PATH"] = f"{venv_bin}:{env.get('PATH', '')}"
-    python_executable = str(venv_bin / "python")
 
   # Log job start header
   print("=" * 80)
