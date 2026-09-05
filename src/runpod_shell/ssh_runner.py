@@ -46,8 +46,23 @@ def resolve_ssh_config(explicit_config=None):
     return str(explicit_config)
 
   env_config = os.environ.get("RUNPOD_SSH_CONFIG")
-  if env_config and env_config.lower() not in ("none", "system", "default", ""):
+  if env_config is not None:
+    if env_config.lower() in ("none", "system", "default", ""):
+      return None
     return env_config
+
+  user_ssh_config = Path.home() / ".ssh" / "config"
+  if user_ssh_config.is_file():
+    return str(user_ssh_config)
+
+  conf_d = Path("/etc/ssh/ssh_config.d")
+  if conf_d.is_dir():
+    try:
+      for f in conf_d.glob("*.conf"):
+        if f.stat().st_uid not in (0, os.getuid()):
+          return "/dev/null"
+    except Exception:
+      pass
 
   return None
 
@@ -219,10 +234,12 @@ echo "JOB_ID:{job_id}"
 
   # Foreground mode: stream logs until completion
   print("\nStreaming remote logs (Ctrl+C to detach without stopping job)...")
+  tail_part = f"tail -n +1 -s 0.2 --pid={pid} -f '{log_file}' 2>/dev/null || tail -n +1 -f '{log_file}'"
+  remote_cmd = f"bash -c '{tail_part} & TPID=$!; trap \"kill -9 $TPID 2>/dev/null\" EXIT INT TERM HUP; wait $TPID'"
   tail_cmd = build_ssh_cmd(
       host,
       port,
-      f"tail -n +1 -s 0.2 --pid={pid} -f '{log_file}' 2>/dev/null || tail -n +1 -f '{log_file}'",
+      remote_cmd,
       private_key_path=private_key_path,
       ssh_config_path=ssh_config_path
   )
@@ -295,9 +312,20 @@ def view_remote_logs(host, port, job_id=None, tail_lines=None, follow=False, pri
   if not log_file:
     raise ValueError(f"Log file not specified in metadata for job {target_job.get('job_id')}")
 
+  status = target_job.get("status")
+  pid = target_job.get("pid")
+
   if follow:
     n = tail_lines if tail_lines else 50
-    remote_cmd = f"tail -n {n} -f '{log_file}'"
+    if status and status != "RUNNING":
+      print(f"Job '{target_job.get('job_id')}' has finished with status: {status} (exit code: {target_job.get('exit_code', 'unknown')}).")
+      remote_cmd = f"tail -n {n} '{log_file}'"
+    else:
+      if pid:
+        tail_part = f"tail -n {n} -s 0.2 --pid={pid} -f '{log_file}' 2>/dev/null || tail -n {n} -f '{log_file}'"
+      else:
+        tail_part = f"tail -n {n} -f '{log_file}'"
+      remote_cmd = f"bash -c '{tail_part} & TPID=$!; trap \"kill -9 $TPID 2>/dev/null\" EXIT INT TERM HUP; wait $TPID'"
   elif tail_lines:
     remote_cmd = f"tail -n {tail_lines} '{log_file}'"
   else:

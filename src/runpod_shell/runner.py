@@ -212,6 +212,16 @@ def cmd_run(args):
   meta["duration_seconds"] = dur_secs
   meta_file.write_text(json.dumps(meta, indent=2))
 
+  try:
+    log_escaped = shlex.quote(str(log_file))
+    subprocess.run(
+        f"pkill -f 'tail .* {log_escaped}'",
+        shell=True,
+        capture_output=True
+    )
+  except Exception:
+    pass
+
   sys.exit(exit_code)
 
 
@@ -372,6 +382,17 @@ def cmd_kill(args):
   if target_job_dir and target_job_dir.exists():
     try:
       (target_job_dir / "killed").touch()
+      meta_f = target_job_dir / "meta.json"
+      if meta_f.exists():
+        data = json.loads(meta_f.read_text())
+        lf = data.get("log_file")
+        if lf:
+          log_escaped = shlex.quote(str(lf))
+          subprocess.run(
+              f"pkill -f 'tail .* {log_escaped}'",
+              shell=True,
+              capture_output=True
+          )
     except Exception:
       pass
 

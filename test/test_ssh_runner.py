@@ -164,13 +164,28 @@ class TestSSHRunner(unittest.TestCase):
   @patch("subprocess.run")
   def test_view_remote_logs_follow(self, mock_run, mock_list):
     mock_list.return_value = [
-        {"job_id": "job-1", "log_file": "/workspace/logs/job-1.log"}
+        {"job_id": "job-1", "pid": 1234, "status": "RUNNING", "log_file": "/workspace/logs/job-1.log"}
     ]
     ssh_runner.view_remote_logs("1.2.3.4", 22, job_id="job-1", follow=True)
     mock_run.assert_called_once()
     called_cmd = mock_run.call_args[0][0]
     self.assertNotIn("-t", called_cmd)
-    self.assertIn("tail -n 50 -f '/workspace/logs/job-1.log'", called_cmd)
+    remote_cmd = called_cmd[-1]
+    self.assertIn("--pid=1234", remote_cmd)
+    self.assertIn("trap", remote_cmd)
+
+  @patch("runpod_shell.ssh_runner.list_remote_jobs")
+  @patch("subprocess.run")
+  def test_view_remote_logs_follow_completed(self, mock_run, mock_list):
+    mock_list.return_value = [
+        {"job_id": "job-1", "pid": 1234, "status": "COMPLETED", "exit_code": 0, "log_file": "/workspace/logs/job-1.log"}
+    ]
+    ssh_runner.view_remote_logs("1.2.3.4", 22, job_id="job-1", follow=True)
+    mock_run.assert_called_once()
+    called_cmd = mock_run.call_args[0][0]
+    remote_cmd = called_cmd[-1]
+    self.assertNotIn("-f", remote_cmd)
+    self.assertIn("tail -n 50 '/workspace/logs/job-1.log'", remote_cmd)
 
   @patch("runpod_shell.ssh_runner.list_remote_jobs")
   @patch("subprocess.run")
@@ -230,8 +245,25 @@ class TestSSHRunner(unittest.TestCase):
     with patch.dict("os.environ", {"RUNPOD_SSH_CONFIG": "none"}):
       self.assertIsNone(ssh_runner.resolve_ssh_config())
 
-    with patch.dict("os.environ", {}, clear=True):
+    with patch.dict("os.environ", {}, clear=True), \
+         patch("pathlib.Path.is_file", return_value=False), \
+         patch("pathlib.Path.is_dir", return_value=False):
       self.assertIsNone(ssh_runner.resolve_ssh_config())
+
+    # User ~/.ssh/config exists
+    with patch.dict("os.environ", {}, clear=True), \
+         patch("pathlib.Path.is_file", return_value=True):
+      self.assertEqual(ssh_runner.resolve_ssh_config(), str(Path.home() / ".ssh" / "config"))
+
+    # Broken system /etc/ssh/ssh_config.d permissions
+    mock_file = MagicMock()
+    mock_file.stat.return_value = MagicMock(st_uid=65534)
+    with patch.dict("os.environ", {}, clear=True), \
+         patch("pathlib.Path.is_file", return_value=False), \
+         patch("pathlib.Path.is_dir", return_value=True), \
+         patch("pathlib.Path.glob", return_value=[mock_file]), \
+         patch("os.getuid", return_value=1000):
+      self.assertEqual(ssh_runner.resolve_ssh_config(), "/dev/null")
 
   def test_build_ssh_cmd_with_ssh_config(self):
     cmd = ssh_runner.build_ssh_cmd("1.2.3.4", 2222, ssh_config_path="/dev/null")
