@@ -10,6 +10,9 @@ import runpod_shell.ssh_runner as ssh_runner
 
 class TestSSHRunner(unittest.TestCase):
 
+  def setUp(self):
+    ssh_runner._ENSURED_RUNNER_HOSTS.clear()
+
   @patch("pathlib.Path.exists", autospec=True)
   def test_find_ssh_private_key_explicit(self, mock_exists):
     mock_exists.return_value = True
@@ -86,9 +89,11 @@ class TestSSHRunner(unittest.TestCase):
   def test_execute_remote_script_detach(self, mock_run, mock_wait_setup, mock_wait_ssh, mock_exists):
     mock_exists.return_value = True
 
-    # First call: scp (success)
-    # Second call: launcher script (prints PID and LOG_FILE)
+    # 1. scp runner.py
+    # 2. scp user script
+    # 3. launcher script
     mock_run.side_effect = [
+        MagicMock(returncode=0, stdout="", stderr=""),
         MagicMock(returncode=0, stdout="", stderr=""),
         MagicMock(returncode=0, stdout="PID:12345\nLOG_FILE:/workspace/logs/job.log\nJOB_ID:job-1\n", stderr="")
     ]
@@ -104,9 +109,9 @@ class TestSSHRunner(unittest.TestCase):
     self.assertEqual(res["pid"], "12345")
     self.assertEqual(res["log_file"], "/workspace/logs/job.log")
     self.assertEqual(res["exit_code"], 0)
-    launch_script = mock_run.call_args_list[1][0][0][-1]
-    self.assertIn('SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"', launch_script)
-    self.assertIn('echo $EXIT_CODE > "$SCRIPT_DIR/exit_code"', launch_script)
+    launch_script = mock_run.call_args_list[2][0][0][-1]
+    self.assertIn("python3 /tmp/.runpod_runner.py run", launch_script)
+    self.assertIn('--job-id "job-1', launch_script)
 
   @patch("pathlib.Path.exists", autospec=True)
   @patch("runpod_shell.ssh_runner.wait_for_ssh")
@@ -115,11 +120,13 @@ class TestSSHRunner(unittest.TestCase):
   def test_execute_remote_script_foreground(self, mock_run, mock_wait_setup, mock_wait_ssh, mock_exists):
     mock_exists.return_value = True
 
-    # 1. scp
-    # 2. launcher
-    # 3. tail -f (streaming)
-    # 4. exit_code read
+    # 1. scp runner.py
+    # 2. scp user script
+    # 3. launcher
+    # 4. tail -f (streaming)
+    # 5. exit_code read
     mock_run.side_effect = [
+        MagicMock(returncode=0, stdout="", stderr=""),
         MagicMock(returncode=0, stdout="", stderr=""),
         MagicMock(returncode=0, stdout="PID:12345\nLOG_FILE:/workspace/logs/job.log\nJOB_ID:job-1\n", stderr=""),
         MagicMock(returncode=0),
@@ -135,7 +142,7 @@ class TestSSHRunner(unittest.TestCase):
 
     self.assertEqual(res["pid"], "12345")
     self.assertEqual(res["exit_code"], 0)
-    tail_script = mock_run.call_args_list[2][0][0][-1]
+    tail_script = mock_run.call_args_list[3][0][0][-1]
     self.assertIn("-s 0.2", tail_script)
 
   @patch("subprocess.run")
@@ -143,7 +150,11 @@ class TestSSHRunner(unittest.TestCase):
     sample_jobs = [
         {"job_id": "job-1", "pid": 1234, "status": "RUNNING", "started_at": 100}
     ]
-    mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps(sample_jobs))
+    # 1. scp runner.py, 2. list command
+    mock_run.side_effect = [
+        MagicMock(returncode=0, stdout="", stderr=""),
+        MagicMock(returncode=0, stdout=json.dumps(sample_jobs), stderr="")
+    ]
 
     jobs = ssh_runner.list_remote_jobs("1.2.3.4", 22)
     self.assertEqual(len(jobs), 1)
@@ -172,17 +183,36 @@ class TestSSHRunner(unittest.TestCase):
     ssh_runner.view_remote_logs("1.2.3.4", 22, job_id="job-1", follow=True)
     mock_run.assert_called_once()
 
-  @patch("runpod_shell.ssh_runner.list_remote_jobs")
   @patch("subprocess.run")
-  def test_kill_remote_job(self, mock_run, mock_list):
-    mock_list.return_value = [
-        {"job_id": "job-1", "pid": 12345}
+  def test_kill_remote_job(self, mock_run):
+    # 1. scp runner.py, 2. kill command
+    mock_run.side_effect = [
+        MagicMock(returncode=0, stdout="", stderr=""),
+        MagicMock(returncode=0, stdout="KILLED\n", stderr="")
     ]
-    mock_run.return_value = MagicMock(returncode=0, stdout="KILLED\n")
     ssh_runner.kill_remote_job("1.2.3.4", 22, "job-1", signal_name="SIGKILL")
-    mock_run.assert_called_once()
-    called_cmd = mock_run.call_args[0][0]
+    self.assertEqual(mock_run.call_count, 2)
+    called_cmd = mock_run.call_args_list[1][0][0]
     self.assertIn("SIGKILL", called_cmd[-1])
+    self.assertIn("python3 /tmp/.runpod_runner.py kill", called_cmd[-1])
+
+  @patch("subprocess.run")
+  def test_ensure_remote_runner(self, mock_run):
+    mock_run.return_value = MagicMock(returncode=0)
+    path1 = ssh_runner.ensure_remote_runner("1.2.3.4", 22)
+    self.assertEqual(path1, "/tmp/.runpod_runner.py")
+    self.assertEqual(mock_run.call_count, 1)
+
+    # Second call should use cache
+    path2 = ssh_runner.ensure_remote_runner("1.2.3.4", 22)
+    self.assertEqual(path2, "/tmp/.runpod_runner.py")
+    self.assertEqual(mock_run.call_count, 1)
+
+  @patch("subprocess.run")
+  def test_ensure_remote_runner_failure(self, mock_run):
+    mock_run.return_value = MagicMock(returncode=1, stderr="SCP failed")
+    with self.assertRaises(RuntimeError):
+      ssh_runner.ensure_remote_runner("1.2.3.4", 22)
 
   def test_resolve_ssh_config(self):
     # Explicit config

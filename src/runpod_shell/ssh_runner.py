@@ -1,10 +1,16 @@
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 import time
 import uuid
+
+
+RUNNER_LOCAL_PATH = Path(__file__).parent / "runner.py"
+REMOTE_RUNNER_PATH = "/tmp/.runpod_runner.py"
+_ENSURED_RUNNER_HOSTS = set()
 
 
 def find_ssh_private_key(public_key_path=None, explicit_private_key_path=None):
@@ -74,6 +80,30 @@ def build_scp_cmd(local_path, remote_path, host, port, private_key_path=None, ss
   return cmd
 
 
+def ensure_remote_runner(host, port, private_key_path=None, ssh_config_path=None):
+  cache_key = (str(host), int(port))
+  if cache_key in _ENSURED_RUNNER_HOSTS:
+    return REMOTE_RUNNER_PATH
+
+  if not RUNNER_LOCAL_PATH.exists():
+    raise FileNotFoundError(f"Local runner script not found at {RUNNER_LOCAL_PATH}")
+
+  scp_cmd = build_scp_cmd(
+      RUNNER_LOCAL_PATH,
+      REMOTE_RUNNER_PATH,
+      host,
+      port,
+      private_key_path=private_key_path,
+      ssh_config_path=ssh_config_path
+  )
+  res = subprocess.run(scp_cmd, capture_output=True, text=True)
+  if res.returncode != 0:
+    raise RuntimeError(f"Failed to upload runner to pod via SCP: {res.stderr.strip()}")
+
+  _ENSURED_RUNNER_HOSTS.add(cache_key)
+  return REMOTE_RUNNER_PATH
+
+
 def wait_for_ssh(host, port, private_key_path=None, timeout=180, interval=3, ssh_config_path=None):
   print(f"Waiting for SSH daemon at {host}:{port} to become available...")
   start_time = time.time()
@@ -127,6 +157,8 @@ def execute_remote_script(
   if wait_for_setup_flag:
     wait_for_setup(host, port, private_key_path=private_key_path, timeout=ssh_timeout, ssh_config_path=ssh_config_path)
 
+  ensure_remote_runner(host, port, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
+
   job_id = f"job-{int(time.time())}-{uuid.uuid4().hex[:6]}"
   remote_script_path = f"/tmp/{job_id}_{local_path.name}"
 
@@ -148,37 +180,15 @@ LOGS_DIR="$BASE_DIR/logs"
 mkdir -p "$JOBS_DIR" "$LOGS_DIR"
 LOG_FILE="$LOGS_DIR/{job_id}_{local_path.name}.log"
 
-cat <<'EOF' > "$JOBS_DIR/runner.sh"
-#!/bin/bash
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-if [ -f /workspace/venv/bin/activate ]; then
-  source /workspace/venv/bin/activate
-fi
-cd /workspace 2>/dev/null || cd /tmp
-"{remote_script_path}" {script_args}
-EXIT_CODE=$?
-echo $EXIT_CODE > "$SCRIPT_DIR/exit_code"
-exit $EXIT_CODE
-EOF
+setsid nohup python3 {REMOTE_RUNNER_PATH} run \\
+  --job-id "{job_id}" \\
+  --script "{remote_script_path}" \\
+  --args {shlex.quote(script_args)} \\
+  --job-dir "$JOBS_DIR" \\
+  --log-file "$LOG_FILE" \\
+  --work-dir "$BASE_DIR" > "$LOG_FILE" 2>&1 &
 
-chmod +x "$JOBS_DIR/runner.sh"
-setsid nohup "$JOBS_DIR/runner.sh" > "$LOG_FILE" 2>&1 &
 PID=$!
-echo $PID > "$JOBS_DIR/pid"
-
-cat <<EOF > "$JOBS_DIR/meta.json"
-{{
-  "job_id": "{job_id}",
-  "pid": $PID,
-  "script": "{local_path.name}",
-  "args": "{script_args}",
-  "started_at": $(date +%s),
-  "started_at_iso": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-  "log_file": "$LOG_FILE",
-  "script_path": "{remote_script_path}"
-}}
-EOF
-
 echo "PID:$PID"
 echo "LOG_FILE:$LOG_FILE"
 echo "JOB_ID:{job_id}"
@@ -241,73 +251,14 @@ echo "JOB_ID:{job_id}"
 
 
 def list_remote_jobs(host, port, private_key_path=None, ssh_config_path=None):
-  script = """
-python3 -c '
-import json
-import os
-import time
-
-jobs = []
-base_dirs = ["/workspace/.runpod_jobs", "/tmp/.runpod_jobs"]
-now = int(time.time())
-
-for b in base_dirs:
-  if not os.path.exists(b):
-    continue
-  for entry in os.listdir(b):
-    job_dir = os.path.join(b, entry)
-    meta_file = os.path.join(job_dir, "meta.json")
-    if not os.path.isfile(meta_file):
-      continue
-    try:
-      with open(meta_file, "r") as f:
-        data = json.load(f)
-    except Exception:
-      continue
-
-    pid = data.get("pid")
-    is_running = False
-    if pid:
-      try:
-        os.kill(int(pid), 0)
-        is_running = True
-      except OSError:
-        is_running = False
-
-    exit_code_file = os.path.join(job_dir, "exit_code")
-    killed_file = os.path.join(job_dir, "killed")
-    status = "UNKNOWN"
-    if is_running:
-      status = "RUNNING"
-    elif os.path.exists(killed_file):
-      status = "KILLED"
-    elif os.path.exists(exit_code_file):
-      try:
-        with open(exit_code_file, "r") as ef:
-          ec = ef.read().strip()
-          status = "COMPLETED" if ec == "0" else f"FAILED({ec})"
-      except Exception:
-        status = "EXITED"
-    else:
-      status = "EXITED"
-
-    data["status"] = status
-    started = data.get("started_at", now)
-    dur_secs = now - started
-    mins, secs = divmod(dur_secs, 60)
-    hours, mins = divmod(mins, 60)
-    if hours > 0:
-      data["duration"] = f"{hours}h {mins}m {secs}s"
-    else:
-      data["duration"] = f"{mins}m {secs}s"
-
-    jobs.append(data)
-
-jobs.sort(key=lambda x: x.get("started_at", 0), reverse=True)
-print(json.dumps(jobs))
-'
-"""
-  cmd = build_ssh_cmd(host, port, script, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
+  ensure_remote_runner(host, port, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
+  cmd = build_ssh_cmd(
+      host,
+      port,
+      f"python3 {REMOTE_RUNNER_PATH} list",
+      private_key_path=private_key_path,
+      ssh_config_path=ssh_config_path
+  )
   res = subprocess.run(cmd, capture_output=True, text=True)
   if res.returncode != 0:
     raise RuntimeError(f"Failed to list remote jobs: {res.stderr.strip()}")
@@ -367,46 +318,15 @@ def view_remote_logs(host, port, job_id=None, tail_lines=None, follow=False, pri
 
 
 def kill_remote_job(host, port, target_id, signal_name="SIGTERM", private_key_path=None, ssh_config_path=None):
-  jobs = list_remote_jobs(host, port, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
-  target_job = None
-
-  for j in jobs:
-    if j.get("job_id") == target_id or str(j.get("pid")) == str(target_id):
-      target_job = j
-      break
-
-  target_pid = target_job.get("pid") if target_job else target_id
-  job_dir = None
-  if target_job:
-    job_id = target_job.get("job_id")
-    job_dir = f"/workspace/.runpod_jobs/{job_id}"
-
-  kill_script = f"""
-PID="{target_pid}"
-JOB_DIR="{job_dir or ''}"
-if kill -0 "$PID" 2>/dev/null; then
-  PGID=$(ps -o pgid= -p "$PID" 2>/dev/null | tr -d ' ')
-  if [ -n "$PGID" ] && [ "$PGID" != "0" ] && [ "$PGID" != "1" ]; then
-    kill -s {signal_name} -"$PGID" 2>/dev/null || kill -s {signal_name} "$PID"
-  else
-    kill -s {signal_name} "$PID"
-  fi
-  if [ -n "$JOB_DIR" ] && [ -d "$JOB_DIR" ]; then
-    touch "$JOB_DIR/killed"
-  fi
-  echo "KILLED"
-else
-  echo "NOT_RUNNING"
-fi
-"""
-
-  cmd = build_ssh_cmd(host, port, kill_script, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
+  ensure_remote_runner(host, port, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
+  kill_cmd = f"python3 {REMOTE_RUNNER_PATH} kill --target {shlex.quote(str(target_id))} --signal {shlex.quote(signal_name)}"
+  cmd = build_ssh_cmd(host, port, kill_cmd, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
   res = subprocess.run(cmd, capture_output=True, text=True)
   output = res.stdout.strip()
 
   if "KILLED" in output:
-    print(f"Signal {signal_name} sent to process {target_pid} and its process group.")
+    print(f"Signal {signal_name} sent to process {target_id} and its process group.")
   elif "NOT_RUNNING" in output:
-    print(f"Process {target_pid} was not running.")
+    print(f"Process {target_id} was not running.")
   else:
     print(f"Result: {output}")
