@@ -70,17 +70,19 @@ class TestRunPodShellCLI(unittest.TestCase):
     packages = cli.read_apt_packages_file("apt.txt")
     self.assertEqual(packages, ["screen", "curl", "htop"])
 
+  @patch("runpod_shell.cli.wait_for_ssh")
+  @patch("runpod_shell.cli.run_container_setup")
   @patch("runpod_shell.cli.get_ssh_key")
   @patch("runpod_shell.cli.read_requirements")
   @patch("runpod_shell.cli.read_apt_packages_file")
   @patch("runpod.create_pod")
   @patch("runpod.get_pod")
   @patch("time.sleep")
-  def test_create_command_escaping(self, mock_sleep, mock_get_pod, mock_create_pod, mock_apt_file, mock_req, mock_ssh_key):
+  def test_create_command_escaping(self, mock_sleep, mock_get_pod, mock_create_pod, mock_apt_file, mock_req, mock_ssh_key, mock_setup, mock_wait_ssh):
     mock_ssh_key.return_value = "ssh-rsa fake_public_key"
     mock_req.return_value = "importlib-metadata==6.7.0; python_version < '3.8'"
     mock_apt_file.return_value = ["git"]
-    
+
     mock_create_pod.return_value = {"id": "pod-123"}
     mock_get_pod.return_value = {
         "id": "pod-123",
@@ -116,24 +118,24 @@ class TestRunPodShellCLI(unittest.TestCase):
     self.assertEqual(kwargs["gpu_count"], 1)
     self.assertEqual(kwargs["min_vcpu_count"], 4)
     self.assertEqual(kwargs["min_memory_in_gb"], 8)
+    self.assertNotIn("docker_args", kwargs)
 
-    docker_args = kwargs["docker_args"]
-    self.assertNotIn("\n", docker_args)
-    self.assertNotIn('"', docker_args)
-    m = re.search(r"echo\s+([A-Za-z0-9+/=]+)\s+\|\s+base64\s+-d", docker_args)
-    self.assertIsNotNone(m)
-    decoded_script = base64.b64decode(m.group(1)).decode("utf-8")
-    self.assertIn(r"echo 'importlib-metadata==6.7.0; python_version < '\''3.8'\''' > /workspace/requirements.txt", decoded_script)
-    self.assertIn('if [ -d "/workspace/venv" ] && [ -f "/root/.bashrc" ] && ! grep -q "source /workspace/venv/bin/activate" /root/.bashrc; then', decoded_script)
-    self.assertIn('echo "source /workspace/venv/bin/activate" >> /root/.bashrc', decoded_script)
+    mock_wait_ssh.assert_called_once()
+    mock_setup.assert_called_once()
+    setup_kwargs = mock_setup.call_args[1]
+    setup_script = setup_kwargs["setup_script_content"]
+    self.assertIn("echo 'importlib-metadata==6.7.0; python_version < '\\''3.8'\\''' > \"/workspace/requirements.txt\"", setup_script)
+    self.assertIn('echo "source $VENV_DIR/bin/activate" >> /root/.bashrc', setup_script)
 
+  @patch("subprocess.run")
+  @patch("runpod_shell.cli.wait_for_ssh")
   @patch("runpod_shell.cli.get_ssh_key")
   @patch("runpod_shell.cli.read_requirements")
   @patch("runpod_shell.cli.read_apt_packages_file")
   @patch("runpod.create_pod")
   @patch("runpod.get_pod")
   @patch("time.sleep")
-  def test_create_command_custom_vcpu_and_memory(self, mock_sleep, mock_get_pod, mock_create_pod, mock_apt_file, mock_req, mock_ssh_key):
+  def test_create_command_custom_vcpu_and_memory(self, mock_sleep, mock_get_pod, mock_create_pod, mock_apt_file, mock_req, mock_ssh_key, mock_wait_ssh, mock_sub_run):
     mock_ssh_key.return_value = "ssh-rsa fake_public_key"
     mock_req.return_value = ""
     mock_apt_file.return_value = []
@@ -173,6 +175,8 @@ class TestRunPodShellCLI(unittest.TestCase):
     self.assertEqual(kwargs["name"], "test-worker-custom")
     self.assertEqual(kwargs["min_vcpu_count"], 8)
     self.assertEqual(kwargs["min_memory_in_gb"], 16)
+    self.assertNotIn("docker_args", kwargs)
+    mock_wait_ssh.assert_called_once()
 
   @patch("sys.stderr")
   def test_fatal(self, mock_stderr):
@@ -268,6 +272,8 @@ class TestRunPodShellCLI(unittest.TestCase):
       with self.assertRaises(ValueError):
         cli.main()
 
+  @patch("subprocess.run")
+  @patch("runpod_shell.cli.wait_for_ssh")
   @patch("runpod_shell.cli.execute_remote_script")
   @patch("runpod_shell.cli.find_ssh_private_key")
   @patch("runpod_shell.cli.get_ssh_key")
@@ -276,7 +282,7 @@ class TestRunPodShellCLI(unittest.TestCase):
   @patch("runpod.create_pod")
   @patch("runpod.get_pod")
   @patch("time.sleep")
-  def test_create_with_run_script(self, mock_sleep, mock_get_pod, mock_create_pod, mock_apt_file, mock_req, mock_ssh_key, mock_find_priv, mock_exec):
+  def test_create_with_run_script(self, mock_sleep, mock_get_pod, mock_create_pod, mock_apt_file, mock_req, mock_ssh_key, mock_find_priv, mock_exec, mock_wait_ssh, mock_sub_run):
     mock_ssh_key.return_value = "ssh-rsa fake_public_key"
     mock_req.return_value = ""
     mock_apt_file.return_value = []
@@ -305,6 +311,7 @@ class TestRunPodShellCLI(unittest.TestCase):
     with patch.object(sys, "argv", test_args):
       cli.main()
 
+    mock_wait_ssh.assert_called_once()
     mock_exec.assert_called_once_with(
         host="12.34.56.78",
         port=12345,
@@ -312,11 +319,13 @@ class TestRunPodShellCLI(unittest.TestCase):
         script_args="--flag 1",
         detach=False,
         private_key_path=Path("/fake/priv_key"),
-        wait_for_setup_flag=True,
+        wait_for_setup_flag=False,
         ssh_timeout=180,
         ssh_config_path=None
     )
 
+  @patch("subprocess.run")
+  @patch("runpod_shell.cli.wait_for_ssh")
   @patch("runpod_shell.cli.execute_remote_script")
   @patch("runpod_shell.cli.find_ssh_private_key")
   @patch("runpod_shell.cli.get_ssh_key")
@@ -325,7 +334,7 @@ class TestRunPodShellCLI(unittest.TestCase):
   @patch("runpod.create_pod")
   @patch("runpod.get_pod")
   @patch("time.sleep")
-  def test_create_with_ssh_config(self, mock_sleep, mock_get_pod, mock_create_pod, mock_apt_file, mock_req, mock_ssh_key, mock_find_priv, mock_exec):
+  def test_create_with_ssh_config(self, mock_sleep, mock_get_pod, mock_create_pod, mock_apt_file, mock_req, mock_ssh_key, mock_find_priv, mock_exec, mock_wait_ssh, mock_sub_run):
     mock_ssh_key.return_value = "ssh-rsa fake_public_key"
     mock_req.return_value = ""
     mock_apt_file.return_value = []
@@ -354,6 +363,7 @@ class TestRunPodShellCLI(unittest.TestCase):
     with patch.object(sys, "argv", test_args):
       cli.main()
 
+    mock_wait_ssh.assert_called_once()
     mock_exec.assert_called_once_with(
         host="12.34.56.78",
         port=12345,
@@ -361,7 +371,7 @@ class TestRunPodShellCLI(unittest.TestCase):
         script_args="",
         detach=False,
         private_key_path=Path("/fake/priv_key"),
-        wait_for_setup_flag=True,
+        wait_for_setup_flag=False,
         ssh_timeout=180,
         ssh_config_path="/dev/null"
     )
@@ -548,6 +558,8 @@ class TestRunPodShellCLI(unittest.TestCase):
         ssh_config_path="/env/ssh/config"
     )
 
+  @patch("subprocess.run")
+  @patch("runpod_shell.cli.wait_for_ssh")
   @patch("runpod_shell.cli.get_pod_template")
   @patch("runpod_shell.cli.get_ssh_key")
   @patch("runpod_shell.cli.read_requirements")
@@ -555,7 +567,7 @@ class TestRunPodShellCLI(unittest.TestCase):
   @patch("runpod.create_pod")
   @patch("runpod.get_pod")
   @patch("time.sleep")
-  def test_create_with_template_id(self, mock_sleep, mock_get_pod, mock_create_pod, mock_apt_file, mock_req, mock_ssh_key, mock_get_template):
+  def test_create_with_template_id(self, mock_sleep, mock_get_pod, mock_create_pod, mock_apt_file, mock_req, mock_ssh_key, mock_get_template, mock_wait_ssh, mock_sub_run):
     mock_ssh_key.return_value = "ssh-rsa fake_public_key"
     mock_req.return_value = ""
     mock_apt_file.return_value = []
@@ -585,12 +597,16 @@ class TestRunPodShellCLI(unittest.TestCase):
     with patch.object(sys, "argv", test_args):
       cli.main()
 
+    mock_wait_ssh.assert_called_once()
     mock_create_pod.assert_called_once()
     kwargs = mock_create_pod.call_args[1]
     self.assertEqual(kwargs["name"], "test-template-worker")
     self.assertEqual(kwargs["template_id"], "runpod-torch-v280")
     self.assertEqual(kwargs["image_name"], "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404")
+    self.assertNotIn("docker_args", kwargs)
 
+  @patch("subprocess.run")
+  @patch("runpod_shell.cli.wait_for_ssh")
   @patch("runpod_shell.cli.get_pod_template")
   @patch("runpod_shell.cli.get_ssh_key")
   @patch("runpod_shell.cli.read_requirements")
@@ -598,7 +614,7 @@ class TestRunPodShellCLI(unittest.TestCase):
   @patch("runpod.create_pod")
   @patch("runpod.get_pod")
   @patch("time.sleep")
-  def test_create_template_id_precedence_over_image_name(self, mock_sleep, mock_get_pod, mock_create_pod, mock_apt_file, mock_req, mock_ssh_key, mock_get_template):
+  def test_create_template_id_precedence_over_image_name(self, mock_sleep, mock_get_pod, mock_create_pod, mock_apt_file, mock_req, mock_ssh_key, mock_get_template, mock_wait_ssh, mock_sub_run):
     mock_ssh_key.return_value = "ssh-rsa fake_public_key"
     mock_req.return_value = ""
     mock_apt_file.return_value = []
@@ -629,6 +645,7 @@ class TestRunPodShellCLI(unittest.TestCase):
     with patch.object(sys, "argv", test_args):
       cli.main()
 
+    mock_wait_ssh.assert_called_once()
     mock_create_pod.assert_called_once()
     kwargs = mock_create_pod.call_args[1]
     self.assertEqual(kwargs["name"], "test-precedence-worker")
@@ -758,16 +775,18 @@ class TestRunPodShellCLI(unittest.TestCase):
         pip_packages=["scdiag[all] @ git+https://github.com/davidel/scdiag.git", "nvidia-ml-py"],
         volume_mount_path="/workspace"
     )
-    self.assertIn("pip install 'scdiag[all] @ git+https://github.com/davidel/scdiag.git' nvidia-ml-py", script)
+    self.assertIn("install 'scdiag[all] @ git+https://github.com/davidel/scdiag.git' nvidia-ml-py", script)
     self.assertIn("apt-get install -y screen tree gcc", script)
 
+  @patch("runpod_shell.cli.wait_for_ssh")
+  @patch("runpod_shell.cli.run_container_setup")
   @patch("runpod_shell.cli.get_ssh_key")
   @patch("runpod_shell.cli.read_requirements")
   @patch("runpod_shell.cli.read_apt_packages_file")
   @patch("runpod.create_pod")
   @patch("runpod.get_pod")
   @patch("time.sleep")
-  def test_create_command_pip_packages_with_spaces(self, mock_sleep, mock_get_pod, mock_create_pod, mock_apt_file, mock_req, mock_ssh_key):
+  def test_create_command_pip_packages_with_spaces(self, mock_sleep, mock_get_pod, mock_create_pod, mock_apt_file, mock_req, mock_ssh_key, mock_setup, mock_wait_ssh):
     mock_ssh_key.return_value = "ssh-rsa fake_public_key"
     mock_req.return_value = ""
     mock_apt_file.return_value = []
@@ -792,11 +811,124 @@ class TestRunPodShellCLI(unittest.TestCase):
       cli.main()
     mock_create_pod.assert_called_once()
     kwargs = mock_create_pod.call_args[1]
-    docker_args = kwargs["docker_args"]
-    m = re.search(r"echo\s+([A-Za-z0-9+/=]+)\s+\|\s+base64\s+-d", docker_args)
-    self.assertIsNotNone(m)
-    decoded_script = base64.b64decode(m.group(1)).decode("utf-8")
-    self.assertIn("pip install 'scdiag[all] @ git+https://github.com/davidel/scdiag.git' nvidia-ml-py", decoded_script)
+    self.assertNotIn("docker_args", kwargs)
+    mock_wait_ssh.assert_called_once()
+    mock_setup.assert_called_once()
+    setup_kwargs = mock_setup.call_args[1]
+    setup_script = setup_kwargs["setup_script_content"]
+    self.assertIn("install 'scdiag[all] @ git+https://github.com/davidel/scdiag.git' nvidia-ml-py", setup_script)
+
+  @patch("subprocess.run")
+  @patch("runpod_shell.cli.wait_for_ssh")
+  @patch("runpod_shell.cli.get_ssh_key")
+  @patch("runpod_shell.cli.read_requirements")
+  @patch("runpod_shell.cli.read_apt_packages_file")
+  @patch("runpod.create_pod")
+  @patch("runpod.get_pod")
+  @patch("time.sleep")
+  def test_create_with_explicit_docker_args(self, mock_sleep, mock_get_pod, mock_create_pod, mock_apt_file, mock_req, mock_ssh_key, mock_wait_ssh, mock_sub_run):
+    mock_ssh_key.return_value = "ssh-rsa fake_public_key"
+    mock_req.return_value = ""
+    mock_apt_file.return_value = []
+    mock_create_pod.return_value = {"id": "pod-123"}
+    mock_get_pod.return_value = {
+        "id": "pod-123",
+        "desiredStatus": "RUNNING",
+        "runtime": {
+            "ports": [{"privatePort": 22, "publicPort": 12345, "ip": "12.34.56.78"}]
+        }
+    }
+    test_args = [
+        "cli.py",
+        "--api-key", "fake-api-key",
+        "create",
+        "--name", "test-custom-docker",
+        "--image-name", "custom/image:tag",
+        "--docker-args", "bash -c 'sleep 3600'"
+    ]
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+    mock_create_pod.assert_called_once()
+    kwargs = mock_create_pod.call_args[1]
+    self.assertEqual(kwargs.get("docker_args"), "bash -c 'sleep 3600'")
+
+  def test_get_pod_ssh_endpoint_graphql_fields(self):
+    pod_info = {
+        "runtime": {
+            "ports": [
+                {
+                    "ip": "1.2.3.4",
+                    "privatePort": 22,
+                    "publicPort": 54321
+                }
+            ]
+        }
+    }
+    host, port = cli.get_pod_ssh_endpoint(pod_info)
+    self.assertEqual(host, "1.2.3.4")
+    self.assertEqual(port, 54321)
+
+  @patch("runpod.get_pods")
+  @patch("sys.stdout")
+  def test_cmd_list_with_graphql_endpoint(self, mock_stdout, mock_get_pods):
+    mock_get_pods.return_value = [
+        {
+            "id": "pod-123",
+            "name": "my-worker",
+            "desiredStatus": "RUNNING",
+            "gpuName": "RTX 4090",
+            "gpuCount": 1,
+            "runtime": {
+                "ports": [
+                    {
+                        "ip": "1.2.3.4",
+                        "privatePort": 22,
+                        "publicPort": 54321
+                    }
+                ]
+            }
+        }
+    ]
+    test_args = ["cli.py", "--api-key", "fake-api-key", "list"]
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+    calls = [call[0][0] for call in mock_stdout.write.call_args_list if call[0]]
+    output = "".join(calls)
+    self.assertIn("1.2.3.4:54321", output)
+
+  @patch("runpod_shell.cli.get_ssh_key")
+  @patch("runpod_shell.cli.read_requirements")
+  @patch("runpod_shell.cli.read_apt_packages_file")
+  @patch("runpod.create_pod")
+  @patch("runpod.get_pod")
+  @patch("time.sleep")
+  def test_create_polling_failed_status(self, mock_sleep, mock_get_pod, mock_create_pod, mock_apt_file, mock_req, mock_ssh_key):
+    mock_ssh_key.return_value = "ssh-rsa fake_public_key"
+    mock_req.return_value = ""
+    mock_apt_file.return_value = []
+    mock_create_pod.return_value = {"id": "pod-123"}
+    mock_get_pod.return_value = {
+        "id": "pod-123",
+        "desiredStatus": "FAILED"
+    }
+    test_args = [
+        "cli.py",
+        "--api-key", "fake-api-key",
+        "create",
+        "--name", "test-fail-worker",
+        "--image-name", "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404"
+    ]
+    with patch.object(sys, "argv", test_args):
+      with self.assertRaises(RuntimeError) as ctx:
+        cli.main()
+      self.assertIn("Pod initialization failed with status: FAILED", str(ctx.exception))
+
+  @patch("runpod_shell.cli.execute_remote_script")
+  def test_run_container_setup_failure(self, mock_exec):
+    mock_exec.return_value = {"exit_code": 1}
+    with self.assertRaises(RuntimeError) as ctx:
+      cli.run_container_setup("1.2.3.4", 22, "#!/bin/bash\nexit 1")
+    self.assertIn("Container setup failed with exit code: 1", str(ctx.exception))
 
 
 if __name__ == "__main__":

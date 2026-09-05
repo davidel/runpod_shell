@@ -71,6 +71,7 @@ runpod-shell create [OPTIONS]
 | `--env` | *None* | Environment variables (e.g. `KEY=VALUE`) |
 | `--env-file` | *None* | Path to a `.env` file containing environment variables |
 | `--ports` | `22/tcp` | Container ports to expose |
+| `--docker-args` | *None* | Optional custom docker arguments to override container entrypoint |
 | `--cloud-type` | `SECURE` | Type of cloud network (`SECURE`, `COMMUNITY`, or `ALL`) |
 | `--container-disk-size` | `30` | Container local disk size in GB |
 | `--volume-mount-path` | `/workspace` | Path inside container where the network volume is mounted |

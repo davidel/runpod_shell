@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import subprocess
 import sys
 import time
 import runpod
@@ -15,7 +16,9 @@ from runpod_shell.ssh_runner import (
     execute_remote_script,
     list_remote_jobs,
     view_remote_logs,
-    kill_remote_job
+    kill_remote_job,
+    wait_for_ssh,
+    build_ssh_cmd
 )
 
 
@@ -116,49 +119,130 @@ def read_apt_packages_file(file_path_str):
 
 
 def build_container_setup_script(apt_packages, requirements_content, pip_packages, volume_mount_path):
-  # Build apt install command
   apt_packages_str = " ".join(shlex.quote(p) for p in apt_packages) if apt_packages else ""
-  apt_install_cmd = f"apt-get update && apt-get install -y {apt_packages_str}" if apt_packages else "true"
-
-  # Build python venv setup script
-  escaped_requirements = requirements_content.replace("'", "'\\''")
-  write_requirements = f"echo '{escaped_requirements}' > {volume_mount_path}/requirements.txt" if requirements_content.strip() else "true"
   pip_packages_str = " ".join(shlex.quote(p) for p in pip_packages) if pip_packages else ""
+
+  lines = [
+      "#!/bin/bash",
+      "set -eo pipefail",
+      "",
+      "log() {",
+      '  echo "[$(date \'+%Y-%m-%d %H:%M:%S\')] [setup] $*"',
+      "}",
+      "",
+      'log "Starting container environment setup..."',
+      f'mkdir -p "{volume_mount_path}" 2>/dev/null || true'
+  ]
+
+  if apt_packages_str:
+    lines.extend([
+        f'log "Updating apt repositories and installing packages: {apt_packages_str}..."',
+        f"apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y {apt_packages_str}",
+        'log "Apt packages installed successfully."'
+    ])
+
+  escaped_requirements = requirements_content.replace("'", "'\\''")
+  if requirements_content.strip():
+    lines.extend([
+        'log "Writing requirements.txt..."',
+        f"echo '{escaped_requirements}' > \"{volume_mount_path}/requirements.txt\""
+    ])
 
   if requirements_content.strip() or pip_packages_str:
     venv_dir = f"{volume_mount_path}/venv"
     sentinel = f"{venv_dir}/.setup_complete"
-    install_pip_packages = f"{venv_dir}/bin/pip install {pip_packages_str}" if pip_packages_str else "true"
+    install_pip = f'"{venv_dir}/bin/pip" install {pip_packages_str}' if pip_packages_str else "true"
+
+    lines.extend([
+        f'VENV_DIR="{venv_dir}"',
+        f'SENTINEL="{sentinel}"',
+        'if [ -d "$VENV_DIR" ] && [ ! -f "$SENTINEL" ]; then',
+        '  log "Warning: Found incomplete or broken virtual environment. Cleaning up..."',
+        '  rm -rf "$VENV_DIR"',
+        "fi",
+        'if [ ! -d "$VENV_DIR" ]; then',
+        '  log "Creating fresh virtual environment on Volume at $VENV_DIR..."',
+        '  python3 -m venv "$VENV_DIR"',
+        '  log "Upgrading pip in virtual environment..."',
+        '  "$VENV_DIR/bin/pip" install --upgrade pip'
+    ])
+
+    if requirements_content.strip():
+      lines.extend([
+          f'  if [ -f "{volume_mount_path}/requirements.txt" ]; then',
+          f'    log "Installing packages from {volume_mount_path}/requirements.txt..."',
+          f'    "$VENV_DIR/bin/pip" install -r "{volume_mount_path}/requirements.txt"',
+          "  fi"
+      ])
+
     if pip_packages_str:
-      existing_venv_install = f"""echo "Installing command-line pip packages..."; \\
-    {install_pip_packages}; \\"""
-    else:
-      existing_venv_install = "true; \\"
+      lines.extend([
+          f'  log "Installing command-line pip packages: {pip_packages_str}..."',
+          f"  {install_pip}"
+      ])
 
-    setup_requirements = f"""{write_requirements} && \\
-if [ -d "{venv_dir}" ] && [ ! -f "{sentinel}" ]; then \\
-    echo "Warning: Found incomplete or broken virtual environment. Cleaning up..."; \\
-    rm -rf "{venv_dir}"; \\
-fi && \\
-if [ ! -d "{venv_dir}" ]; then \\
-    echo "Creating fresh venv on Network Volume..."; \\
-    python3 -m venv "{venv_dir}" && \\
-    "{venv_dir}/bin/pip" install --upgrade pip && \\
-    if [ -f "{volume_mount_path}/requirements.txt" ]; then "{venv_dir}/bin/pip" install -r "{volume_mount_path}/requirements.txt"; fi && \\
-    {install_pip_packages} && \\
-    touch "{sentinel}"; \\
-else \\
-    echo "Found healthy virtual environment."; \\
-    {existing_venv_install}
-fi && \\
-if [ -d "{venv_dir}" ] && [ -f "/root/.bashrc" ] && ! grep -q "source {venv_dir}/bin/activate" /root/.bashrc; then \\
-    echo "source {venv_dir}/bin/activate" >> /root/.bashrc; \\
-fi"""
-  else:
-    setup_requirements = "true"
+    lines.extend([
+        '  touch "$SENTINEL"',
+        '  log "Virtual environment setup complete."',
+        "else",
+        '  log "Found existing healthy virtual environment."'
+    ])
 
-  sentinel_setup = f"mkdir -p {volume_mount_path} 2>/dev/null; touch {volume_mount_path}/.setup_complete || touch /tmp/.setup_complete"
-  return f"{apt_install_cmd} && {setup_requirements} && ({sentinel_setup})"
+    if pip_packages_str:
+      lines.extend([
+          f'  log "Installing command-line pip packages: {pip_packages_str}..."',
+          f"  {install_pip}"
+      ])
+
+    lines.extend([
+        "fi",
+        'if [ -d "$VENV_DIR" ] && [ -f "/root/.bashrc" ] && ! grep -q "source $VENV_DIR/bin/activate" /root/.bashrc; then',
+        '  echo "source $VENV_DIR/bin/activate" >> /root/.bashrc',
+        "fi"
+    ])
+
+  lines.extend([
+      f'mkdir -p "{volume_mount_path}" 2>/dev/null || true',
+      f'touch "{volume_mount_path}/.setup_complete" 2>/dev/null || touch /tmp/.setup_complete',
+      'log "Container environment setup finished successfully."'
+  ])
+
+  return "\n".join(lines) + "\n"
+
+
+def run_container_setup(
+    host,
+    port,
+    setup_script_content,
+    private_key_path=None,
+    detach=False,
+    ssh_timeout=180,
+    ssh_config_path=None
+):
+  import tempfile
+  with tempfile.NamedTemporaryFile(mode="w", suffix="_setup_container.sh", delete=False) as tf:
+    tf.write(setup_script_content)
+    temp_path = tf.name
+
+  try:
+    print("\nRunning container environment setup via SSH...")
+    res = execute_remote_script(
+        host=host,
+        port=port,
+        script_path=temp_path,
+        script_args="",
+        detach=detach,
+        private_key_path=private_key_path,
+        wait_for_setup_flag=False,
+        ssh_timeout=ssh_timeout,
+        ssh_config_path=ssh_config_path
+    )
+    if not detach and res.get("exit_code", 0) != 0:
+      fatal(f"Container setup failed with exit code: {res.get('exit_code')}")
+    return res
+  finally:
+    if os.path.exists(temp_path):
+      os.remove(temp_path)
 
 
 def get_valid_gpus():
@@ -215,15 +299,15 @@ def get_pod_ssh_endpoint(pod_info):
   if isinstance(ports, list):
     for p in ports:
       if p.get("privatePort") == 22:
-        ssh_port = p.get("isExternal")
-        ssh_host = p.get("address")
+        ssh_port = p.get("publicPort") or p.get("isExternal")
+        ssh_host = p.get("ip") or p.get("address")
         break
 
   if not ssh_host and pod_info:
     ssh_host = pod_info.get("ipAddress") or pod_info.get("address")
 
   if not ssh_port and isinstance(ports, dict):
-    ssh_port = ports.get("isExternal")
+    ssh_port = ports.get("publicPort") or ports.get("isExternal")
 
   return ssh_host, ssh_port
 
@@ -246,7 +330,7 @@ def cmd_create(args):
 
   if args.apt_packages is not None:
     apt_packages.extend(args.apt_packages)
-  elif not args.apt_packages_file:
+  elif not args.apt_packages_file and (args.pip_packages or requirements_content.strip()):
     apt_packages = ["screen", "curl", "htop", "ffmpeg", "git"]
 
   # Build container disk setup script
@@ -275,7 +359,6 @@ def cmd_create(args):
 
   # Launch Pod
   print(f"Launching RunPod instance '{args.name}'...")
-  b64_setup = base64.b64encode(container_disk_setup.encode("utf-8")).decode("ascii")
   create_args = {
       "name": args.name,
       "gpu_type_id": gpu_type,
@@ -286,9 +369,11 @@ def cmd_create(args):
       "env": container_env,
       "cloud_type": args.cloud_type,
       "min_vcpu_count": args.vcpu_count,
-      "min_memory_in_gb": args.memory,
-      "docker_args": f"/bin/bash -c 'echo {b64_setup} | base64 -d | /bin/bash && sleep infinity'"
+      "min_memory_in_gb": args.memory
   }
+
+  if getattr(args, "docker_args", None):
+    create_args["docker_args"] = args.docker_args
 
   if template_id:
     create_args["template_id"] = template_id
@@ -310,33 +395,90 @@ def cmd_create(args):
 
   # Wait for the pod to boot up
   print("Waiting for pod to initialize...")
-  while True:
+  start_poll = time.time()
+  poll_timeout = getattr(args, "ssh_timeout", 180)
+  if poll_timeout < 300:
+    poll_timeout = 300
+  pod_info = None
+  last_status = None
+
+  while time.time() - start_poll < poll_timeout:
     try:
       pod_info = runpod.get_pod(pod["id"])
-      if pod_info.get("runtime") and pod_info["runtime"].get("gpus"):
-        break
     except Exception as e:
       print(f"Error polling pod status: {e}")
+      time.sleep(5)
+      continue
+
+    if not pod_info:
+      time.sleep(5)
+      continue
+
+    status = pod_info.get("desiredStatus") or pod_info.get("status")
+    if status in ("EXITED", "TERMINATED", "FAILED", "DEAD"):
+      fatal(f"Pod initialization failed with status: {status}")
+
+    if status != last_status:
+      last_status = status
+      print(f"Pod status: {status}")
+
+    ssh_host, ssh_port = get_pod_ssh_endpoint(pod_info)
+    if status == "RUNNING" and ssh_host and ssh_port and ssh_port != "unknown":
+      break
+
     time.sleep(5)
+  else:
+    fatal(f"Timed out waiting for pod '{pod['id']}' to become ready after {poll_timeout} seconds.")
 
   ssh_host, ssh_port = get_pod_ssh_endpoint(pod_info)
-
-  if not ssh_host:
-    ssh_host = "your-runpod-proxy-endpoint.runpod.net"
-
-  if not ssh_port:
-    ssh_port = "unknown"
+  if not ssh_host or not ssh_port or ssh_port == "unknown":
+    fatal(f"Could not resolve SSH endpoint for pod '{pod['id']}'.")
 
   ssh_config = getattr(args, "ssh_config", None)
   resolved_cfg = resolve_ssh_config(ssh_config)
   ssh_config_flag = f"-F {resolved_cfg} " if resolved_cfg else ""
 
-  print(f"\nPod is ready! Connect via SSH:")
-  print(f"ssh {ssh_config_flag}-p {ssh_port} root@{ssh_host}")
+  priv_key = find_ssh_private_key(args.ssh_key_path, getattr(args, "ssh_private_key_path", None))
+  wait_for_ssh(
+      host=ssh_host,
+      port=ssh_port,
+      private_key_path=priv_key,
+      timeout=getattr(args, "ssh_timeout", 180),
+      ssh_config_path=ssh_config
+  )
+
+  has_setup = bool(
+      args.apt_packages or
+      args.apt_packages_file or
+      requirements_content.strip() or
+      args.pip_packages
+  )
+  no_wait_setup = getattr(args, "no_wait_for_setup", False)
+
+  if has_setup:
+    detach_setup = getattr(args, "detach", False) and not getattr(args, "run_script", None)
+    run_container_setup(
+        host=ssh_host,
+        port=ssh_port,
+        setup_script_content=container_disk_setup,
+        private_key_path=priv_key,
+        detach=detach_setup,
+        ssh_timeout=getattr(args, "ssh_timeout", 180),
+        ssh_config_path=ssh_config
+    )
+  else:
+    sentinel_cmd = f"mkdir -p {args.volume_mount_path} 2>/dev/null; touch {args.volume_mount_path}/.setup_complete 2>/dev/null || touch /tmp/.setup_complete"
+    cmd = build_ssh_cmd(
+        ssh_host,
+        ssh_port,
+        sentinel_cmd,
+        private_key_path=priv_key,
+        ssh_config_path=ssh_config
+    )
+    subprocess.run(cmd, capture_output=True, text=True)
 
   if getattr(args, "run_script", None):
-    priv_key = find_ssh_private_key(args.ssh_key_path, getattr(args, "ssh_private_key_path", None))
-    wait_setup = not getattr(args, "no_wait_for_setup", False)
+    wait_setup = has_setup and not no_wait_setup
     res = execute_remote_script(
         host=ssh_host,
         port=ssh_port,
@@ -350,6 +492,9 @@ def cmd_create(args):
     )
     if not getattr(args, "detach", False) and res.get("exit_code", 0) != 0:
       sys.exit(res["exit_code"])
+
+  print(f"\nPod is ready! Connect via SSH:")
+  print(f"ssh {ssh_config_flag}-p {ssh_port} root@{ssh_host}")
 
 
 def cmd_exec(args):
@@ -500,13 +645,8 @@ def cmd_list(args):
       gpu_display = "CPU only"
 
     # Extract SSH endpoint
-    runtime = p.get("runtime", {})
-    ports = runtime.get("ports", []) if runtime else []
-    ssh_endpoint = "N/A"
-    for port_entry in ports:
-      if port_entry.get("privatePort") == 22:
-        ssh_endpoint = f"{port_entry.get('address')}:{port_entry.get('isExternal')}"
-        break
+    host, port = get_pod_ssh_endpoint(p)
+    ssh_endpoint = f"{host}:{port}" if host and port and port != "unknown" else "N/A"
 
     print(f"{pod_id:<20} | {name:<25} | {status:<12} | {gpu_display:<22} | {ssh_endpoint}")
 
@@ -762,6 +902,13 @@ def main():
       "--ports",
       default="22/tcp",
       help="Container ports to expose (default: %(default)s)"
+  )
+  create_parser.add_argument(
+      "--docker-args",
+      "--docker_args",
+      dest="docker_args",
+      default=None,
+      help="Custom docker arguments to override container entrypoint (optional)"
   )
   create_parser.add_argument(
       "--cloud-type",
