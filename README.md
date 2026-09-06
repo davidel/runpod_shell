@@ -81,8 +81,8 @@ runpod-shell create [OPTIONS]
 | `--pip-packages` | *None* | Extra Python packages to install |
 | `--apt-packages` | *None* | Extra apt packages to install (default: `screen curl htop ffmpeg git`) |
 | `--apt-packages-file` | *None* | Path to a file containing extra apt packages to install |
-| `--env` | *None* | Environment variables (e.g. `KEY=VALUE`) |
-| `--env-file` | *None* | Path to a `.env` file containing environment variables |
+| `--env` | *None* | Environment variables (e.g. `KEY=VALUE`, or RunPod dashboard secret references `KEY='{{ RUNPOD_SECRET_<NAME> }}'`) |
+| `--env-file` | *None* | Path to a `.env` file containing environment variables (supports RunPod dashboard secret references) |
 | `--ports` | `22/tcp` | Container ports to expose |
 | `--docker-args` | *None* | Optional custom docker arguments to override container entrypoint |
 | `--cloud-type` | `SECURE` | Type of cloud network (`SECURE`, `COMMUNITY`, or `ALL`) |
@@ -98,7 +98,11 @@ runpod-shell create [OPTIONS]
 | `--no-wait-for-setup` | `False` | Do not wait for container disk setup to complete before executing script |
 | `--ssh-timeout` | `180` | Max seconds to wait for SSH and setup readiness |
 
-> **Tip:** Creating a pod automatically saves its ID to `~/.config/runpod_shell/.last_pod_id` so subsequent commands (`exec`, `ps`, `logs`, etc.) can be run without passing the pod ID.
+> [!TIP]
+> Creating a pod automatically saves its ID to `~/.config/runpod_shell/.last_pod_id` so subsequent commands (`exec`, `ps`, `logs`, etc.) can be run without passing the pod ID.
+
+> [!NOTE]
+> **RunPod Dashboard Secrets:** RunPod dashboard secrets are supported naturally when creating pods. Pass environment variable values formatted with the template syntax `{{ RUNPOD_SECRET_<SECRET_NAME> }}` (e.g. `--env 'HF_TOKEN={{ RUNPOD_SECRET_HF_TOKEN }}'` or via `--env-file`). RunPod's control plane resolves and substitutes these secrets server-side during container initialization. Quote the CLI argument to prevent shell expansion.
 
 ---
 
@@ -379,6 +383,14 @@ runpod-shell create \
   --gpu-count 2 \
   --env-file secrets.env \
   --pip-packages torchinfo matplotlib
+```
+
+### Launch using RunPod Dashboard Secrets
+```bash
+# Pass dashboard secrets directly via --env (quote to avoid shell expansion)
+runpod-shell create \
+  --env 'HF_TOKEN={{ RUNPOD_SECRET_HF_TOKEN }}' \
+  --env 'WANDB_API_KEY={{ RUNPOD_SECRET_WANDB_API_KEY }}'
 ```
 
 ### Running inside a Bubblewrap Sandbox or Container
