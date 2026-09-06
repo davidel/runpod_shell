@@ -21,6 +21,13 @@ A Python command-line interface to manage RunPod instances (create, list, stop, 
 ## Installation
 
 1. **Install the package**:
+
+   From PyPI:
+   ```bash
+   pip install runpod-shell
+   ```
+
+   Or from source:
    ```bash
    pip install .
    ```
