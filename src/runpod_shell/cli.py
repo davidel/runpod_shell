@@ -19,7 +19,8 @@ from runpod_shell.ssh_runner import (
     view_remote_logs,
     kill_remote_job,
     wait_for_ssh,
-    build_ssh_cmd
+    build_ssh_cmd,
+    build_cp_cmd
 )
 
 
@@ -809,13 +810,100 @@ def cmd_run(args):
       wait_for_setup_flag=wait_setup,
       ssh_timeout=getattr(args, "ssh_timeout", 180),
       ssh_config_path=getattr(args, "ssh_config", None),
-      extra_env=extra_env if extra_env else None
+      extra_env=extra_env if extra_env else None,
+      use_shell=getattr(args, "use_shell", False)
   )
   if res.get("job_id"):
     save_last_job_id(res["job_id"])
 
   if not getattr(args, "detach", False) and res.get("exit_code", 0) != 0:
     sys.exit(res["exit_code"])
+
+
+def is_remote_path(path_str):
+  if path_str.startswith(":"):
+    return True
+  if ":" in path_str:
+    prefix, _ = path_str.split(":", 1)
+    if not any(c in prefix for c in ("/\\")):
+      return True
+  return False
+
+
+def cmd_cp(args):
+  raw_paths = getattr(args, "paths", None) or []
+  if len(raw_paths) < 2:
+    fatal("cp requires at least one source and one destination. Usage: runpod-shell cp [OPTIONS] <source>... <dest>")
+
+  sources = raw_paths[:-1]
+  dest = raw_paths[-1]
+
+  remote_sources = [s for s in sources if is_remote_path(s)]
+  dest_is_remote = is_remote_path(dest)
+
+  if remote_sources and dest_is_remote:
+    fatal("Direct remote-to-remote copying between pods is not supported. Please copy to local first.")
+
+  if not remote_sources and not dest_is_remote:
+    fatal("At least one source or destination must be a remote pod path (e.g. ':/path' or '<pod_id>:/path').")
+
+  pod_id_from_path = None
+  for p in (remote_sources if remote_sources else [dest]):
+    prefix, _ = p.split(":", 1)
+    if prefix:
+      pod_id_from_path = prefix
+      break
+
+  target_pod_id = pod_id_from_path or resolve_pod_id(args)
+
+  if not getattr(args, "quiet", False):
+    print(f"Fetching connection details for pod '{target_pod_id}'...")
+  try:
+    pod_info = runpod.get_pod(target_pod_id)
+  except Exception as e:
+    fatal(f"Failed to fetch pod info: {e}", exc=e.__class__)
+
+  if not pod_info:
+    fatal(f"Pod '{target_pod_id}' not found.", FileNotFoundError)
+
+  ssh_host, ssh_port = get_pod_ssh_endpoint(pod_info)
+  if not ssh_host or not ssh_port or ssh_port == "unknown":
+    fatal(f"Could not resolve SSH endpoint for pod '{target_pod_id}'. Is the pod running and exposing port 22?")
+
+  priv_key = find_ssh_private_key(None, getattr(args, "ssh_private_key_path", None))
+  ssh_cfg = resolve_ssh_config(getattr(args, "ssh_config", None))
+
+  transformed_sources = []
+  for s in sources:
+    if is_remote_path(s):
+      _, rem_path = s.split(":", 1)
+      transformed_sources.append(f"root@{ssh_host}:{rem_path}")
+    else:
+      transformed_sources.append(s)
+
+  if dest_is_remote:
+    _, rem_path = dest.split(":", 1)
+    transformed_dest = f"root@{ssh_host}:{rem_path}"
+  else:
+    transformed_dest = dest
+
+  scp_cmd = build_cp_cmd(
+      sources=transformed_sources,
+      dest=transformed_dest,
+      port=ssh_port,
+      recursive=getattr(args, "recursive", False),
+      preserve=getattr(args, "preserve", False),
+      quiet=getattr(args, "quiet", False),
+      private_key_path=priv_key,
+      ssh_config_path=ssh_cfg
+  )
+
+  try:
+    res = subprocess.run(scp_cmd)
+    if res.returncode != 0:
+      sys.exit(res.returncode)
+  except FileNotFoundError:
+    fatal("Host 'scp' command not found. Please ensure OpenSSH client is installed on your system.")
 
 
 def cmd_ps(args):
@@ -1487,9 +1575,64 @@ def main(args=None):
       help="Path to a file containing environment variables (KEY=VALUE format). Can be specified multiple times."
   )
   run_parser.add_argument(
+      "-s",
+      "--shell",
+      dest="use_shell",
+      action="store_true",
+      help="Execute command within a remote shell (enables wildcards, pipes, redirects)"
+  )
+  run_parser.add_argument(
       "cmd",
       nargs=argparse.REMAINDER,
       help="Command line to execute directly on the remote pod (binary + args)"
+  )
+
+  # Cp Command
+  cp_parser = subparsers.add_parser("cp", help="Copy files or directories between a local path and a RunPod instance via SCP")
+  cp_parser.add_argument(
+      "-p",
+      "--pod",
+      dest="pod",
+      default=None,
+      help="The ID of the target pod (defaults to last created pod)"
+  )
+  cp_parser.add_argument(
+      "-r",
+      "-R",
+      "--recursive",
+      dest="recursive",
+      action="store_true",
+      help="Recursively copy entire directories"
+  )
+  cp_parser.add_argument(
+      "-P",
+      "--preserve",
+      dest="preserve",
+      action="store_true",
+      help="Preserves modification times, access times, and modes from original file"
+  )
+  cp_parser.add_argument(
+      "-q",
+      "--quiet",
+      dest="quiet",
+      action="store_true",
+      help="Quiet mode: disables progress meter and non-fatal messages"
+  )
+  cp_parser.add_argument(
+      "--ssh-private-key-path",
+      dest="ssh_private_key_path",
+      help="Path to private SSH key (auto-detected if omitted)"
+  )
+  cp_parser.add_argument(
+      "--ssh-config",
+      dest="ssh_config",
+      default=os.environ.get("RUNPOD_SSH_CONFIG"),
+      help="Path to custom SSH config file (e.g. /dev/null), or RUNPOD_SSH_CONFIG env var"
+  )
+  cp_parser.add_argument(
+      "paths",
+      nargs="+",
+      help="Source and destination paths (e.g. local_file.txt :/workspace/ or :/workspace/data.csv ./)"
   )
 
   # Ps Command
@@ -1719,6 +1862,8 @@ def main(args=None):
     cmd_create(args)
   elif args.command == "run":
     cmd_run(args)
+  elif args.command == "cp":
+    cmd_cp(args)
   elif args.command == "list":
     cmd_list(args)
   elif args.command == "stop":

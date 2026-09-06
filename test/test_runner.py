@@ -302,6 +302,37 @@ class TestRunnerScript(unittest.TestCase):
       self.assertEqual(meta["job_id"], "test-cmd-1")
       self.assertEqual(meta["status"], "COMPLETED")
 
+  def test_runner_run_shell_mode(self):
+    with tempfile.TemporaryDirectory() as td:
+      tdp = Path(td)
+      (tdp / "alpha_123.txt").write_text("alpha content\n")
+      (tdp / "alpha_456.txt").write_text("another alpha\n")
+
+      job_dir = tdp / ".runpod_jobs" / "test-shell-1"
+      log_file = tdp / "logs" / "test-shell-1.log"
+      log_file.parent.mkdir(parents=True, exist_ok=True)
+
+      with open(log_file, "w") as lf:
+        res = subprocess.run([
+            sys.executable,
+            str(RUNNER_PATH),
+            "run",
+            "--job-id", "test-shell-1",
+            "--shell",
+            "--cmd", "ls alpha_*.txt | wc -l",
+            "--job-dir", str(job_dir),
+            "--log-file", str(log_file),
+            "--work-dir", str(tdp)
+        ], stdout=lf, stderr=subprocess.STDOUT)
+
+      self.assertEqual(res.returncode, 0)
+      log_content = log_file.read_text()
+      self.assertIn("=== RUNPOD JOB STARTED: test-shell-1", log_content)
+      # Two matching files: wc -l should output 2
+      self.assertIn("2", log_content)
+      self.assertIn("=== RUNPOD JOB COMPLETED: test-shell-1", log_content)
+      self.assertEqual((job_dir / "exit_code").read_text().strip(), "0")
+
 
 if __name__ == "__main__":
   unittest.main()

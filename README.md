@@ -4,8 +4,9 @@ A Python command-line interface to manage RunPod instances (create, list, stop, 
 
 ## Features
 
-- **Docker-like Subcommands**: Simple interface to `create`, `list`, `stop`, `terminate`, `templates`, `gpus`, `run`, and `exec`.
-- **Automatic Pod & Job Memory**: Automatically remembers the last created pod ID in `~/.config/runpod_shell/.last_pod_id` and the last executed job ID in `~/.config/runpod_shell/.last_job_id` (overrideable with `RUNPOD_SHELL_CONFIG_DIR`, `RUNPOD_SHELL_LAST_POD_ID_FILE`, or `RUNPOD_SHELL_LAST_JOB_ID_FILE`). All pod commands (`run`, `exec`, `ps`, `logs`, `kill`, `stop`, `terminate`) work seamlessly without having to re-type the pod ID, and commands managing jobs (`logs`, `kill`) implicitly target the last executed job unless overridden with `-j` / `--job`.
+- **Docker-like Subcommands**: Simple interface to `create`, `list`, `stop`, `terminate`, `templates`, `gpus`, `run`, `exec`, and `cp`.
+- **Automatic Pod & Job Memory**: Automatically remembers the last created pod ID in `~/.config/runpod_shell/.last_pod_id` and the last executed job ID in `~/.config/runpod_shell/.last_job_id` (overrideable with `RUNPOD_SHELL_CONFIG_DIR`, `RUNPOD_SHELL_LAST_POD_ID_FILE`, or `RUNPOD_SHELL_LAST_JOB_ID_FILE`). All pod commands (`run`, `exec`, `ps`, `logs`, `kill`, `cp`, `stop`, `terminate`) work seamlessly without having to re-type the pod ID, and commands managing jobs (`logs`, `kill`) implicitly target the last executed job unless overridden with `-j` / `--job`.
+- **Seamless File Transfers (`cp`)**: Transfer files and directories to and from RunPod instances via `scp` with intuitive `[pod_id:]path` and `:/path` syntax, automatic SSH port & key resolution, recursive copying (`-r`), and attribute preservation (`-P`).
 - **In-Memory Secret & Environment Injection**: Pass sensitive secrets (e.g. S3/GCS keys, R2 tokens) into remote scripts in-memory via SSH with `--env` / `-e` or `--env-file` without persisting credentials to the remote pod disk.
 - **Graceful Job Termination**: Kills remote jobs by sending `SIGTERM` first, monitoring exit status, and escalating to `SIGKILL` after a configurable timeout (default: 15s).
 - **Template Management & Image Resolution**: Browse and filter pod templates using `templates`, and launch pods via `--template-id` with automatic base image resolution.
@@ -241,6 +242,10 @@ runpod-shell run nvidia-smi
 # Pass arguments and options to the remote command
 runpod-shell run python train.py --epochs 10 --batch-size 32
 
+# Run via remote shell (enables wildcards, pipes, redirections, and command chaining)
+runpod-shell run -s mv '/workspace/temp/co*' /workspace/
+runpod-shell run --shell "cat /workspace/data.jsonl | grep ERROR > /workspace/errors.log"
+
 # Run detached in background on a specific pod
 runpod-shell run -p <pod-id> -d python train.py
 ```
@@ -249,6 +254,7 @@ runpod-shell run -p <pod-id> -d python train.py
 |---|---|---|
 | `cmd` | *Required* | Command line to execute directly on the remote pod (binary + args) |
 | `-p`, `--pod` | *None* | Target pod ID (defaults to last created pod) |
+| `-s`, `--shell` | `False` | Execute command within a remote shell (enables wildcards, pipes, redirections) |
 | `-d`, `--detach` | `False` | Run command in background without waiting / streaming |
 | `-e`, `--env` | *None* | Environment variable to inject into the remote process in-memory (`KEY=VALUE` or `KEY` to inherit value from local environment). Can accept multiple variables or be repeated. |
 | `--env-file`, `--env_file` | *None* | Path to local `.env` file to inject into the remote process in-memory without persisting credentials to remote disk. Can be specified multiple times. |
@@ -333,6 +339,40 @@ runpod-shell kill -p <pod-id> -j <job-id-or-pid> [OPTIONS]
 | `-p`, `--pod` | *None* | Target pod ID (defaults to last created pod) |
 | `-s`, `--signal` | `SIGTERM` | Initial signal to send (e.g. `SIGTERM`, `SIGKILL`) |
 | `-t`, `--timeout` | `15.0` | Timeout in seconds to wait before escalating from SIGTERM to SIGKILL |
+| `--ssh-private-key-path` | *None* | Path to private SSH key (auto-detected if omitted) |
+| `--ssh-config` | *None* (or `$RUNPOD_SSH_CONFIG`) | Path to custom SSH config file (e.g. `/dev/null`, or `system`) |
+
+---
+
+### 12. `cp`
+Copies files or directories between the local host and an active RunPod instance using `scp`. Supports automatic SSH port and key detection, directory recursion (`-r`), attribute preservation (`-P`), and remote path resolution using `:` or `<pod-id>:`.
+
+Remote paths are distinguished by a colon (`:`):
+* `:/remote/path` — Targets the path on the default pod (or the pod specified by `-p`/`--pod`).
+* `<pod_id>:/remote/path` — Targets the path on a specific pod ID.
+* Local paths contain no colon.
+
+```bash
+# Copy local file to the default pod's /workspace
+runpod-shell cp myfile.tar.gz :/workspace/
+
+# Copy a file from a specific pod to the current local directory
+runpod-shell cp <pod-id>:/workspace/results.csv ./
+
+# Recursively copy a remote directory to local
+runpod-shell cp -r :/workspace/checkpoints/ ./checkpoints/
+
+# Copy matching files using remote wildcards (quote to prevent local expansion)
+runpod-shell cp ':/workspace/temp/co*' ./
+```
+
+| Argument / Flag | Default | Description |
+|---|---|---|
+| `paths` | *Required* | Source and destination paths (e.g. `local.txt :/workspace/` or `:/workspace/data.csv ./`) |
+| `-p`, `--pod` | *None* | Target pod ID (defaults to last created pod if not specified in path prefix) |
+| `-r`, `-R`, `--recursive` | `False` | Recursively copy entire directories |
+| `-P`, `--preserve` | `False` | Preserves modification times, access times, and modes from original file |
+| `-q`, `--quiet` | `False` | Quiet mode: disables progress meter and non-fatal messages |
 | `--ssh-private-key-path` | *None* | Path to private SSH key (auto-detected if omitted) |
 | `--ssh-config` | *None* (or `$RUNPOD_SSH_CONFIG`) | Path to custom SSH config file (e.g. `/dev/null`, or `system`) |
 

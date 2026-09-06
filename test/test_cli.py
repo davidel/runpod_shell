@@ -1446,7 +1446,8 @@ class TestRunPodShellCLI(unittest.TestCase):
         wait_for_setup_flag=True,
         ssh_timeout=180,
         ssh_config_path=None,
-        extra_env=None
+        extra_env=None,
+        use_shell=False
     )
     mock_save_job.assert_called_once_with("job-run-1")
 
@@ -1486,7 +1487,8 @@ class TestRunPodShellCLI(unittest.TestCase):
         wait_for_setup_flag=True,
         ssh_timeout=180,
         ssh_config_path=None,
-        extra_env=None
+        extra_env=None,
+        use_shell=False
     )
     mock_save_job.assert_called_once_with("job-run-2")
 
@@ -1646,6 +1648,156 @@ class TestRunPodShellCLI(unittest.TestCase):
     with patch.object(sys, "argv", test_args):
       cli.main()
     mock_term.assert_called_once_with("pod-short")
+
+  @patch("runpod_shell.cli.save_last_job_id")
+  @patch("runpod_shell.cli.find_ssh_private_key")
+  @patch("runpod_shell.cli.execute_remote_command")
+  @patch("runpod.get_pod")
+  def test_run_command_with_shell_flag(self, mock_get_pod, mock_exec_cmd, mock_find_priv, mock_save_job):
+    mock_find_priv.return_value = None
+    mock_get_pod.return_value = {
+        "id": "pod-123",
+        "runtime": {
+            "ports": [{"privatePort": 22, "isExternal": 12345, "address": "12.34.56.78"}]
+        }
+    }
+    mock_exec_cmd.return_value = {"job_id": "job-shell-1", "pid": "100", "exit_code": 0}
+
+    test_args = [
+        "cli.py",
+        "--api-key", "fake-api-key",
+        "run",
+        "-p", "pod-123",
+        "-s",
+        "mv", "/workspace/temp/co*", "/workspace/"
+    ]
+
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+
+    mock_exec_cmd.assert_called_once_with(
+        host="12.34.56.78",
+        port=12345,
+        command_args=["mv", "/workspace/temp/co*", "/workspace/"],
+        detach=False,
+        private_key_path=None,
+        wait_for_setup_flag=True,
+        ssh_timeout=180,
+        ssh_config_path=None,
+        extra_env=None,
+        use_shell=True
+    )
+
+  @patch("subprocess.run")
+  @patch("runpod_shell.cli.find_ssh_private_key")
+  @patch("runpod.get_pod")
+  def test_cp_local_to_remote(self, mock_get_pod, mock_find_priv, mock_subproc):
+    mock_find_priv.return_value = Path("/my/key")
+    mock_get_pod.return_value = {
+        "id": "pod-cp-1",
+        "runtime": {
+            "ports": [{"privatePort": 22, "isExternal": 54321, "address": "98.76.54.32"}]
+        }
+    }
+    mock_subproc.return_value = MagicMock(returncode=0)
+
+    test_args = [
+        "cli.py",
+        "--api-key", "fake-api-key",
+        "cp",
+        "-p", "pod-cp-1",
+        "local_file.txt",
+        ":/workspace/remote_file.txt"
+    ]
+
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+
+    mock_get_pod.assert_called_once_with("pod-cp-1")
+    mock_subproc.assert_called_once()
+    called_cmd = mock_subproc.call_args[0][0]
+    self.assertEqual(called_cmd[0], "scp")
+    self.assertIn("-P", called_cmd)
+    self.assertIn("54321", called_cmd)
+    self.assertEqual(called_cmd[-2], "local_file.txt")
+    self.assertEqual(called_cmd[-1], "root@98.76.54.32:/workspace/remote_file.txt")
+
+  @patch("subprocess.run")
+  @patch("runpod_shell.cli.find_ssh_private_key")
+  @patch("runpod.get_pod")
+  def test_cp_remote_to_local_with_prefix_pod(self, mock_get_pod, mock_find_priv, mock_subproc):
+    mock_find_priv.return_value = None
+    mock_get_pod.return_value = {
+        "id": "custom-pod",
+        "runtime": {
+            "ports": [{"privatePort": 22, "isExternal": 2222, "address": "1.2.3.4"}]
+        }
+    }
+    mock_subproc.return_value = MagicMock(returncode=0)
+
+    test_args = [
+        "cli.py",
+        "--api-key", "fake-api-key",
+        "cp",
+        "-r",
+        "-P",
+        "custom-pod:/workspace/data",
+        "./local_data"
+    ]
+
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+
+    mock_get_pod.assert_called_once_with("custom-pod")
+    called_cmd = mock_subproc.call_args[0][0]
+    self.assertIn("-r", called_cmd)
+    self.assertIn("-p", called_cmd)
+    self.assertEqual(called_cmd[-2], "root@1.2.3.4:/workspace/data")
+    self.assertEqual(called_cmd[-1], "./local_data")
+
+  @patch("runpod_shell.cli.get_last_pod_id")
+  @patch("subprocess.run")
+  @patch("runpod_shell.cli.find_ssh_private_key")
+  @patch("runpod.get_pod")
+  def test_cp_with_last_pod(self, mock_get_pod, mock_find_priv, mock_subproc, mock_last_pod):
+    mock_last_pod.return_value = "last-pod-99"
+    mock_find_priv.return_value = None
+    mock_get_pod.return_value = {
+        "id": "last-pod-99",
+        "runtime": {
+            "ports": [{"privatePort": 22, "isExternal": 2222, "address": "1.2.3.4"}]
+        }
+    }
+    mock_subproc.return_value = MagicMock(returncode=0)
+
+    test_args = [
+        "cli.py",
+        "--api-key", "fake-api-key",
+        "cp",
+        ":/workspace/temp/co*",
+        "./dest/"
+    ]
+
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+
+    mock_get_pod.assert_called_once_with("last-pod-99")
+    called_cmd = mock_subproc.call_args[0][0]
+    self.assertEqual(called_cmd[-2], "root@1.2.3.4:/workspace/temp/co*")
+    self.assertEqual(called_cmd[-1], "./dest/")
+
+  def test_cp_validation_errors(self):
+    # No remote path
+    test_args = ["cli.py", "--api-key", "fake-api-key", "cp", "local1", "local2"]
+    with patch.object(sys, "argv", test_args):
+      with self.assertRaises(RuntimeError):
+        cli.main()
+
+    # Both remote paths
+    test_args2 = ["cli.py", "--api-key", "fake-api-key", "cp", ":/remote1", ":/remote2"]
+    with patch.object(sys, "argv", test_args2):
+      with self.assertRaises(RuntimeError):
+        cli.main()
 
 
 if __name__ == "__main__":

@@ -106,11 +106,20 @@ def cmd_run(args):
   python_executable = shutil.which("python3") or shutil.which("python") or "python3"
 
   if getattr(args, "cmd", None):
-    cmd = shlex.split(args.cmd)
-    if args.args:
-      cmd.extend(shlex.split(args.args))
-    script_name = Path(cmd[0]).name if cmd else "command"
-    script_path_str = " ".join(shlex.quote(c) for c in cmd)
+    if getattr(args, "shell", False):
+      shell_binary = os.environ.get("SHELL") or shutil.which("bash") or "/bin/sh"
+      full_cmd_str = args.cmd
+      if args.args:
+        full_cmd_str = f"{full_cmd_str} {args.args}"
+      cmd = [shell_binary, "-c", full_cmd_str]
+      script_name = Path(shell_binary).name
+      script_path_str = f"{shell_binary} -c {shlex.quote(full_cmd_str)}"
+    else:
+      cmd = shlex.split(args.cmd)
+      if args.args:
+        cmd.extend(shlex.split(args.args))
+      script_name = Path(cmd[0]).name if cmd else "command"
+      script_path_str = " ".join(shlex.quote(c) for c in cmd)
   elif getattr(args, "script", None):
     script_path = Path(args.script)
     script_name = script_path.name
@@ -537,6 +546,7 @@ def main():
   run_p.add_argument("--job-dir", required=True)
   run_p.add_argument("--log-file", required=True)
   run_p.add_argument("--work-dir", default="")
+  run_p.add_argument("--shell", action="store_true", default=False)
 
   list_p = subparsers.add_parser("list")
   list_p.add_argument("--base-dir", default=None)

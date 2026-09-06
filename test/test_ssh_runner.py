@@ -391,6 +391,55 @@ class TestSSHRunner(unittest.TestCase):
     self.assertEqual(res["pid"], "54321")
     self.assertEqual(res["exit_code"], 0)
 
+  def test_build_cp_cmd_basic(self):
+    cmd = ssh_runner.build_cp_cmd(
+        sources=["root@1.2.3.4:/workspace/file.txt"],
+        dest="./file.txt",
+        port=2222,
+        recursive=True,
+        preserve=True,
+        quiet=True,
+        private_key_path=Path("/tmp/key"),
+        ssh_config_path="/dev/null"
+    )
+    self.assertEqual(cmd[0], "scp")
+    self.assertIn("-P", cmd)
+    self.assertIn("2222", cmd)
+    self.assertIn("-r", cmd)
+    self.assertIn("-p", cmd)
+    self.assertIn("-q", cmd)
+    self.assertIn("-F", cmd)
+    self.assertIn("/dev/null", cmd)
+    self.assertIn("-i", cmd)
+    self.assertIn("/tmp/key", cmd)
+    self.assertEqual(cmd[-2], "root@1.2.3.4:/workspace/file.txt")
+    self.assertEqual(cmd[-1], "./file.txt")
+
+  @patch("runpod_shell.ssh_runner.wait_for_ssh")
+  @patch("runpod_shell.ssh_runner.wait_for_setup")
+  @patch("subprocess.run")
+  def test_execute_remote_command_with_shell(self, mock_run, mock_wait_setup, mock_wait_ssh):
+    mock_run.side_effect = [
+        MagicMock(returncode=0, stdout="", stderr=""),
+        MagicMock(returncode=0, stdout="PID:54321\nLOG_FILE:/workspace/logs/job.log\nJOB_ID:job-cmd-shell\n", stderr=""),
+        MagicMock(returncode=0),
+        MagicMock(returncode=0, stdout="0\n", stderr="")
+    ]
+
+    res = ssh_runner.execute_remote_command(
+        host="1.2.3.4",
+        port=22,
+        command_args=["echo $VAR | grep foo"],
+        detach=False,
+        use_shell=True
+    )
+
+    self.assertTrue(res["job_id"].startswith("job-"))
+    # Verify launcher script contains --shell
+    launcher_ssh_call = mock_run.call_args_list[1]
+    launcher_script = launcher_ssh_call[0][0][-1]
+    self.assertIn("--shell", launcher_script)
+
 
 if __name__ == "__main__":
   unittest.main()

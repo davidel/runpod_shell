@@ -97,6 +97,35 @@ def build_scp_cmd(local_path, remote_path, host, port, private_key_path=None, ss
   return cmd
 
 
+def build_cp_cmd(
+    sources,
+    dest,
+    port,
+    recursive=False,
+    preserve=False,
+    quiet=False,
+    private_key_path=None,
+    ssh_config_path=None
+):
+  cmd = ["scp", "-P", str(port)]
+  if recursive:
+    cmd.append("-r")
+  if preserve:
+    cmd.append("-p")
+  if quiet:
+    cmd.append("-q")
+  cfg = resolve_ssh_config(ssh_config_path)
+  if cfg:
+    cmd.extend(["-F", str(cfg)])
+  cmd.extend(["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR"])
+  if private_key_path:
+    cmd.extend(["-i", str(private_key_path)])
+  for s in sources:
+    cmd.append(str(s))
+  cmd.append(str(dest))
+  return cmd
+
+
 def ensure_remote_runner(host, port, private_key_path=None, ssh_config_path=None):
   cache_key = (str(host), int(port))
   if cache_key in _ENSURED_RUNNER_HOSTS:
@@ -284,16 +313,27 @@ def execute_remote_command(
     wait_for_setup_flag=True,
     ssh_timeout=180,
     ssh_config_path=None,
-    extra_env=None
+    extra_env=None,
+    use_shell=False
 ):
-  if isinstance(command_args, (list, tuple)):
-    cmd_str = " ".join(shlex.quote(str(a)) for a in command_args)
-    first_token = command_args[0] if command_args else "cmd"
-    binary_name = Path(str(first_token)).name
+  if use_shell:
+    if isinstance(command_args, (list, tuple)):
+      if len(command_args) == 1:
+        cmd_str = str(command_args[0])
+      else:
+        cmd_str = " ".join(str(a) for a in command_args)
+    else:
+      cmd_str = str(command_args)
+    binary_name = "shell"
   else:
-    cmd_str = str(command_args)
-    tokens = shlex.split(cmd_str)
-    binary_name = Path(tokens[0]).name if tokens else "cmd"
+    if isinstance(command_args, (list, tuple)):
+      cmd_str = " ".join(shlex.quote(str(a)) for a in command_args)
+      first_token = command_args[0] if command_args else "cmd"
+      binary_name = Path(str(first_token)).name
+    else:
+      cmd_str = str(command_args)
+      tokens = shlex.split(cmd_str)
+      binary_name = Path(tokens[0]).name if tokens else "cmd"
 
   binary_name = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', binary_name) or "cmd"
 
@@ -312,6 +352,8 @@ def execute_remote_command(
     env_b64 = base64.b64encode(env_json.encode("utf-8")).decode("ascii")
     env_payload_line = f'export RUNPOD_JOB_ENV="{env_b64}"\n'
 
+  shell_flag = "--shell \\\n  " if use_shell else ""
+
   # Launcher command on remote host
   launcher_script = f"""{env_payload_line}BASE_DIR="/workspace"
 if [ ! -d "/workspace" ]; then
@@ -324,7 +366,7 @@ LOG_FILE="$LOGS_DIR/{job_id}_{binary_name}.log"
 
 setsid nohup python3 {REMOTE_RUNNER_PATH} run \\
   --job-id "{job_id}" \\
-  --cmd {shlex.quote(cmd_str)} \\
+  {shell_flag}--cmd {shlex.quote(cmd_str)} \\
   --job-dir "$JOBS_DIR" \\
   --log-file "$LOG_FILE" \\
   --work-dir "$BASE_DIR" > "$LOG_FILE" 2>&1 &
