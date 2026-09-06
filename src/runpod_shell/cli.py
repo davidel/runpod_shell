@@ -1053,7 +1053,7 @@ def cmd_kill(args):
       port=ssh_port,
       target_id=target,
       signal_name=args.signal,
-      timeout=getattr(args, "timeout", 15.0),
+      timeout=getattr(args, "timeout", 30.0),
       private_key_path=priv_key,
       ssh_config_path=getattr(args, "ssh_config", None)
   )
@@ -1757,7 +1757,7 @@ def main(args=None):
       "--timeout",
       dest="timeout",
       type=float,
-      default=15.0,
+      default=30.0,
       help="Grace period in seconds before escalating SIGTERM to SIGKILL (default: %(default)s)"
   )
   kill_parser.add_argument(
