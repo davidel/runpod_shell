@@ -2,6 +2,7 @@ import base64
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import sys
@@ -256,6 +257,124 @@ echo "JOB_ID:{job_id}"
   except KeyboardInterrupt:
     print(f"\nDetached from remote process {pid}. Job continues running in background.")
     print(f"To re-attach: runpod-shell logs [--pod <pod-id>] {job_id} -f")
+    return {"job_id": job_id, "pid": pid, "log_file": log_file, "exit_code": 0}
+
+  # Check final exit code
+  exit_code_cmd = build_ssh_cmd(
+      host,
+      port,
+      f"cat /workspace/.runpod_jobs/{job_id}/exit_code 2>/dev/null || cat /tmp/.runpod_jobs/{job_id}/exit_code 2>/dev/null || echo unknown",
+      private_key_path=private_key_path,
+      ssh_config_path=ssh_config_path
+  )
+  code_res = subprocess.run(exit_code_cmd, capture_output=True, text=True)
+  exit_code_str = code_res.stdout.strip()
+  exit_code = int(exit_code_str) if exit_code_str.isdigit() else 0
+
+  print(f"\nRemote job completed with exit code: {exit_code}")
+  return {"job_id": job_id, "pid": pid, "log_file": log_file, "exit_code": exit_code}
+
+
+def execute_remote_command(
+    host,
+    port,
+    command_args,
+    detach=False,
+    private_key_path=None,
+    wait_for_setup_flag=True,
+    ssh_timeout=180,
+    ssh_config_path=None,
+    extra_env=None
+):
+  if isinstance(command_args, (list, tuple)):
+    cmd_str = " ".join(shlex.quote(str(a)) for a in command_args)
+    first_token = command_args[0] if command_args else "cmd"
+    binary_name = Path(str(first_token)).name
+  else:
+    cmd_str = str(command_args)
+    tokens = shlex.split(cmd_str)
+    binary_name = Path(tokens[0]).name if tokens else "cmd"
+
+  binary_name = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', binary_name) or "cmd"
+
+  wait_for_ssh(host, port, private_key_path=private_key_path, timeout=ssh_timeout, ssh_config_path=ssh_config_path)
+
+  if wait_for_setup_flag:
+    wait_for_setup(host, port, private_key_path=private_key_path, timeout=ssh_timeout, ssh_config_path=ssh_config_path)
+
+  ensure_remote_runner(host, port, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
+
+  job_id = f"job-{int(time.time())}-{uuid.uuid4().hex[:6]}"
+
+  env_payload_line = ""
+  if extra_env:
+    env_json = json.dumps(extra_env)
+    env_b64 = base64.b64encode(env_json.encode("utf-8")).decode("ascii")
+    env_payload_line = f'export RUNPOD_JOB_ENV="{env_b64}"\n'
+
+  # Launcher command on remote host
+  launcher_script = f"""{env_payload_line}BASE_DIR="/workspace"
+if [ ! -d "/workspace" ]; then
+  BASE_DIR="/tmp"
+fi
+JOBS_DIR="$BASE_DIR/.runpod_jobs/{job_id}"
+LOGS_DIR="$BASE_DIR/logs"
+mkdir -p "$JOBS_DIR" "$LOGS_DIR"
+LOG_FILE="$LOGS_DIR/{job_id}_{binary_name}.log"
+
+setsid nohup python3 {REMOTE_RUNNER_PATH} run \\
+  --job-id "{job_id}" \\
+  --cmd {shlex.quote(cmd_str)} \\
+  --job-dir "$JOBS_DIR" \\
+  --log-file "$LOG_FILE" \\
+  --work-dir "$BASE_DIR" > "$LOG_FILE" 2>&1 &
+
+PID=$!
+echo "PID:$PID"
+echo "LOG_FILE:$LOG_FILE"
+echo "JOB_ID:{job_id}"
+"""
+
+  launch_cmd = build_ssh_cmd(host, port, launcher_script, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
+  launch_res = subprocess.run(launch_cmd, capture_output=True, text=True)
+  if launch_res.returncode != 0:
+    raise RuntimeError(f"Failed to launch command on pod: {launch_res.stderr.strip()}")
+
+  pid = None
+  log_file = None
+  for line in launch_res.stdout.splitlines():
+    if line.startswith("PID:"):
+      pid = line.split("PID:", 1)[1].strip()
+    elif line.startswith("LOG_FILE:"):
+      log_file = line.split("LOG_FILE:", 1)[1].strip()
+
+  print(f"\nRemote job registered:")
+  print(f"  Job ID:   {job_id}")
+  print(f"  PID:      {pid}")
+  print(f"  Log file: {log_file}")
+
+  if detach:
+    print(f"\nCommand is running in background.")
+    print(f"To monitor logs: runpod-shell logs [-p <pod-id>] [-j <job-id>] -f")
+    return {"job_id": job_id, "pid": pid, "log_file": log_file, "exit_code": 0}
+
+  # Foreground mode: stream logs until completion
+  print("\nStreaming remote logs (Ctrl+C to detach without stopping job)...")
+  tail_part = f"tail -n +1 -s 0.2 --pid={pid} -f '{log_file}' 2>/dev/null || tail -n +1 -f '{log_file}'"
+  remote_cmd = f"bash -c '{tail_part} & TPID=$!; trap \"kill -9 $TPID 2>/dev/null\" EXIT INT TERM HUP; wait $TPID'"
+  tail_cmd = build_ssh_cmd(
+      host,
+      port,
+      remote_cmd,
+      private_key_path=private_key_path,
+      ssh_config_path=ssh_config_path
+  )
+
+  try:
+    subprocess.run(tail_cmd)
+  except KeyboardInterrupt:
+    print(f"\nDetached from remote process {pid}. Job continues running in background.")
+    print(f"To re-attach: runpod-shell logs [-p <pod-id>] [-j <job-id>] -f")
     return {"job_id": job_id, "pid": pid, "log_file": log_file, "exit_code": 0}
 
   # Check final exit code

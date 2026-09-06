@@ -1385,6 +1385,268 @@ class TestRunPodShellCLI(unittest.TestCase):
 
     mock_save.assert_called_once_with("pod-new-456")
 
+  def test_save_and_get_last_job_id(self):
+    with tempfile.TemporaryDirectory() as td:
+      fake_file = Path(td) / ".last_job_id"
+      with patch.dict(os.environ, {"RUNPOD_SHELL_LAST_JOB_ID_FILE": str(fake_file)}):
+        self.assertIsNone(cli.get_last_job_id())
+        cli.save_last_job_id("job-abc-123")
+        self.assertEqual(cli.get_last_job_id(), "job-abc-123")
+        cli.clear_last_job_id_if_match("job-other")
+        self.assertEqual(cli.get_last_job_id(), "job-abc-123")
+        cli.clear_last_job_id_if_match("job-abc-123")
+        self.assertIsNone(cli.get_last_job_id())
+
+  def test_job_id_file_env_overrides(self):
+    with tempfile.TemporaryDirectory() as td:
+      dir_path = Path(td) / "custom_config"
+      file_path = Path(td) / "custom_file"
+      with patch.dict(os.environ, {"RUNPOD_SHELL_CONFIG_DIR": str(dir_path)}, clear=True):
+        self.assertEqual(cli.get_last_job_id_file(), dir_path / ".last_job_id")
+
+      with patch.dict(os.environ, {"RUNPOD_SHELL_LAST_JOB_ID_FILE": str(file_path)}, clear=True):
+        self.assertEqual(cli.get_last_job_id_file(), file_path)
+
+      with patch.dict(os.environ, {}, clear=True):
+        self.assertEqual(cli.get_last_job_id_file(), Path.home() / ".config" / "runpod_shell" / ".last_job_id")
+
+  @patch("runpod_shell.cli.save_last_job_id")
+  @patch("runpod_shell.cli.find_ssh_private_key")
+  @patch("runpod_shell.cli.execute_remote_command")
+  @patch("runpod.get_pod")
+  def test_run_command_with_pod_flag_and_args(self, mock_get_pod, mock_exec_cmd, mock_find_priv, mock_save_job):
+    mock_find_priv.return_value = None
+    mock_get_pod.return_value = {
+        "id": "pod-123",
+        "runtime": {
+            "ports": [{"privatePort": 22, "isExternal": 12345, "address": "12.34.56.78"}]
+        }
+    }
+    mock_exec_cmd.return_value = {"job_id": "job-run-1", "pid": "999", "exit_code": 0}
+
+    test_args = [
+        "cli.py",
+        "--api-key", "fake-api-key",
+        "run",
+        "-p", "pod-123",
+        "-d",
+        "python3", "-c", "print('hello')"
+    ]
+
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+
+    mock_get_pod.assert_called_once_with("pod-123")
+    mock_exec_cmd.assert_called_once_with(
+        host="12.34.56.78",
+        port=12345,
+        command_args=["python3", "-c", "print('hello')"],
+        detach=True,
+        private_key_path=None,
+        wait_for_setup_flag=True,
+        ssh_timeout=180,
+        ssh_config_path=None,
+        extra_env=None
+    )
+    mock_save_job.assert_called_once_with("job-run-1")
+
+  @patch("runpod_shell.cli.save_last_job_id")
+  @patch("runpod_shell.cli.get_last_pod_id")
+  @patch("runpod_shell.cli.find_ssh_private_key")
+  @patch("runpod_shell.cli.execute_remote_command")
+  @patch("runpod.get_pod")
+  def test_run_command_with_last_pod_id(self, mock_get_pod, mock_exec_cmd, mock_find_priv, mock_last_pod, mock_save_job):
+    mock_last_pod.return_value = "pod-last"
+    mock_find_priv.return_value = None
+    mock_get_pod.return_value = {
+        "id": "pod-last",
+        "runtime": {
+            "ports": [{"privatePort": 22, "isExternal": 12345, "address": "12.34.56.78"}]
+        }
+    }
+    mock_exec_cmd.return_value = {"job_id": "job-run-2", "pid": "1000", "exit_code": 0}
+
+    test_args = [
+        "cli.py",
+        "--api-key", "fake-api-key",
+        "run",
+        "ls", "-la"
+    ]
+
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+
+    mock_get_pod.assert_called_once_with("pod-last")
+    mock_exec_cmd.assert_called_once_with(
+        host="12.34.56.78",
+        port=12345,
+        command_args=["ls", "-la"],
+        detach=False,
+        private_key_path=None,
+        wait_for_setup_flag=True,
+        ssh_timeout=180,
+        ssh_config_path=None,
+        extra_env=None
+    )
+    mock_save_job.assert_called_once_with("job-run-2")
+
+  @patch("runpod_shell.cli.save_last_job_id")
+  @patch("runpod_shell.cli.find_ssh_private_key")
+  @patch("runpod_shell.cli.execute_remote_script")
+  @patch("runpod.get_pod")
+  def test_exec_saves_last_job_id(self, mock_get_pod, mock_exec, mock_find_priv, mock_save_job):
+    mock_find_priv.return_value = None
+    mock_get_pod.return_value = {
+        "id": "pod-exec",
+        "runtime": {
+            "ports": [{"privatePort": 22, "isExternal": 12345, "address": "12.34.56.78"}]
+        }
+    }
+    mock_exec.return_value = {"job_id": "job-exec-1", "pid": "101", "exit_code": 0}
+
+    test_args = [
+        "cli.py",
+        "--api-key", "fake-api-key",
+        "exec",
+        "-p", "pod-exec",
+        "train.py"
+    ]
+
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+
+    mock_save_job.assert_called_once_with("job-exec-1")
+
+  @patch("runpod_shell.cli.find_ssh_private_key")
+  @patch("runpod_shell.cli.view_remote_logs")
+  @patch("runpod_shell.cli.get_last_pod_id")
+  @patch("runpod.get_pod")
+  def test_logs_with_job_flag(self, mock_get_pod, mock_last_pod, mock_logs, mock_find_priv):
+    mock_last_pod.return_value = "pod-last"
+    mock_find_priv.return_value = None
+    mock_get_pod.return_value = {
+        "id": "pod-last",
+        "runtime": {
+            "ports": [{"privatePort": 22, "isExternal": 12345, "address": "12.34.56.78"}]
+        }
+    }
+    test_args = ["cli.py", "--api-key", "fake-api-key", "logs", "-j", "job-flag-1"]
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+    mock_get_pod.assert_called_once_with("pod-last")
+    mock_logs.assert_called_once_with(
+        host="12.34.56.78",
+        port=12345,
+        job_id="job-flag-1",
+        tail_lines=None,
+        follow=False,
+        private_key_path=None,
+        ssh_config_path=None
+    )
+
+  @patch("runpod_shell.cli.get_last_job_id")
+  @patch("runpod_shell.cli.find_ssh_private_key")
+  @patch("runpod_shell.cli.view_remote_logs")
+  @patch("runpod_shell.cli.get_last_pod_id")
+  @patch("runpod.get_pod")
+  def test_logs_with_last_job_id(self, mock_get_pod, mock_last_pod, mock_logs, mock_find_priv, mock_last_job):
+    mock_last_pod.return_value = "pod-last"
+    mock_last_job.return_value = "job-last-saved"
+    mock_find_priv.return_value = None
+    mock_get_pod.return_value = {
+        "id": "pod-last",
+        "runtime": {
+            "ports": [{"privatePort": 22, "isExternal": 12345, "address": "12.34.56.78"}]
+        }
+    }
+    test_args = ["cli.py", "--api-key", "fake-api-key", "logs"]
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+    mock_get_pod.assert_called_once_with("pod-last")
+    mock_logs.assert_called_once_with(
+        host="12.34.56.78",
+        port=12345,
+        job_id="job-last-saved",
+        tail_lines=None,
+        follow=False,
+        private_key_path=None,
+        ssh_config_path=None
+    )
+
+  @patch("runpod_shell.cli.clear_last_job_id_if_match")
+  @patch("runpod_shell.cli.find_ssh_private_key")
+  @patch("runpod_shell.cli.kill_remote_job")
+  @patch("runpod_shell.cli.get_last_pod_id")
+  @patch("runpod.get_pod")
+  def test_kill_with_job_flag(self, mock_get_pod, mock_last_pod, mock_kill, mock_find_priv, mock_clear_job):
+    mock_last_pod.return_value = "pod-last"
+    mock_find_priv.return_value = None
+    mock_get_pod.return_value = {
+        "id": "pod-last",
+        "runtime": {
+            "ports": [{"privatePort": 22, "isExternal": 12345, "address": "12.34.56.78"}]
+        }
+    }
+    test_args = ["cli.py", "--api-key", "fake-api-key", "kill", "-j", "job-kill-1"]
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+    mock_get_pod.assert_called_once_with("pod-last")
+    mock_kill.assert_called_once_with(
+        host="12.34.56.78",
+        port=12345,
+        target_id="job-kill-1",
+        signal_name="SIGTERM",
+        timeout=15.0,
+        private_key_path=None,
+        ssh_config_path=None
+    )
+    mock_clear_job.assert_called_once_with("job-kill-1")
+
+  @patch("runpod_shell.cli.get_last_job_id")
+  @patch("runpod_shell.cli.clear_last_job_id_if_match")
+  @patch("runpod_shell.cli.find_ssh_private_key")
+  @patch("runpod_shell.cli.kill_remote_job")
+  @patch("runpod_shell.cli.get_last_pod_id")
+  @patch("runpod.get_pod")
+  def test_kill_with_last_job_id(self, mock_get_pod, mock_last_pod, mock_kill, mock_find_priv, mock_clear_job, mock_last_job):
+    mock_last_pod.return_value = "pod-last"
+    mock_last_job.return_value = "job-last-killed"
+    mock_find_priv.return_value = None
+    mock_get_pod.return_value = {
+        "id": "pod-last",
+        "runtime": {
+            "ports": [{"privatePort": 22, "isExternal": 12345, "address": "12.34.56.78"}]
+        }
+    }
+    test_args = ["cli.py", "--api-key", "fake-api-key", "kill"]
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+    mock_get_pod.assert_called_once_with("pod-last")
+    mock_kill.assert_called_once_with(
+        host="12.34.56.78",
+        port=12345,
+        target_id="job-last-killed",
+        signal_name="SIGTERM",
+        timeout=15.0,
+        private_key_path=None,
+        ssh_config_path=None
+    )
+    mock_clear_job.assert_called_once_with("job-last-killed")
+
+  @patch("runpod.stop_pod")
+  def test_stop_with_pod_short_flag(self, mock_stop):
+    test_args = ["cli.py", "--api-key", "fake-api-key", "stop", "-p", "pod-short"]
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+    mock_stop.assert_called_once_with("pod-short")
+
+  @patch("runpod.terminate_pod")
+  def test_terminate_with_pod_short_flag(self, mock_term):
+    test_args = ["cli.py", "--api-key", "fake-api-key", "terminate", "-p", "pod-short"]
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+    mock_term.assert_called_once_with("pod-short")
+
 
 if __name__ == "__main__":
   unittest.main()

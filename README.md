@@ -4,8 +4,8 @@ A Python command-line interface to manage RunPod instances (create, list, stop, 
 
 ## Features
 
-- **Docker-like Subcommands**: Simple interface to `create`, `list`, `stop`, `terminate`, `templates`, and list `gpus`.
-- **Automatic Pod Memory**: Automatically remembers the last created pod ID in `~/.config/runpod_shell/.last_pod_id` (overrideable with `RUNPOD_SHELL_CONFIG_DIR` or `RUNPOD_SHELL_LAST_POD_ID_FILE`). All pod commands (`exec`, `ps`, `logs`, `kill`, `stop`, `terminate`) work seamlessly without having to re-type the pod ID.
+- **Docker-like Subcommands**: Simple interface to `create`, `list`, `stop`, `terminate`, `templates`, `gpus`, `run`, and `exec`.
+- **Automatic Pod & Job Memory**: Automatically remembers the last created pod ID in `~/.config/runpod_shell/.last_pod_id` and the last executed job ID in `~/.config/runpod_shell/.last_job_id` (overrideable with `RUNPOD_SHELL_CONFIG_DIR`, `RUNPOD_SHELL_LAST_POD_ID_FILE`, or `RUNPOD_SHELL_LAST_JOB_ID_FILE`). All pod commands (`run`, `exec`, `ps`, `logs`, `kill`, `stop`, `terminate`) work seamlessly without having to re-type the pod ID, and commands managing jobs (`logs`, `kill`) implicitly target the last executed job unless overridden with `-j` / `--job`.
 - **In-Memory Secret & Environment Injection**: Pass sensitive secrets (e.g. S3/GCS keys, R2 tokens) into remote scripts in-memory via SSH with `--env` / `-e` or `--env-file` without persisting credentials to the remote pod disk.
 - **Graceful Job Termination**: Kills remote jobs by sending `SIGTERM` first, monitoring exit status, and escalating to `SIGKILL` after a configurable timeout (default: 15s).
 - **Template Management & Image Resolution**: Browse and filter pod templates using `templates`, and launch pods via `--template-id` with automatic base image resolution.
@@ -40,11 +40,12 @@ A Python command-line interface to manage RunPod instances (create, list, stop, 
    export RUNPOD_SSH_CONFIG="/dev/null"
    ```
 
-   *(Optional)* Configure or isolate the pod ID persistence directory (defaults to `~/.config/runpod_shell`):
+   *(Optional)* Configure or isolate the pod and job ID persistence directory (defaults to `~/.config/runpod_shell`):
    ```bash
    export RUNPOD_SHELL_CONFIG_DIR="/path/to/config"
-   # or specify the exact file path:
+   # or specify the exact file paths:
    export RUNPOD_SHELL_LAST_POD_ID_FILE="/path/to/.last_pod_id"
+   export RUNPOD_SHELL_LAST_JOB_ID_FILE="/path/to/.last_job_id"
    ```
 
 > **Note:** Once installed, the `runpod-shell` executable is available in your `PATH`. Alternatively, you can run commands via the Python module syntax: `python3 -m runpod_shell <subcommand>`.
@@ -139,13 +140,14 @@ runpod-shell stop
 
 # Or specify a pod explicitly
 runpod-shell stop <pod-id>
+runpod-shell stop -p <pod-id>
 runpod-shell stop --pod <pod-id>
 ```
 
 | Argument / Flag | Default | Description |
 |---|---|---|
 | `pod-id` | *None* | The ID of the pod to stop (optional positional, defaults to last created pod) |
-| `--pod` | *None* | The ID of the pod to stop (defaults to last created pod) |
+| `-p`, `--pod` | *None* | The ID of the pod to stop (defaults to last created pod) |
 
 ---
 
@@ -158,13 +160,14 @@ runpod-shell terminate
 
 # Or specify a pod explicitly
 runpod-shell terminate <pod-id>
+runpod-shell terminate -p <pod-id>
 runpod-shell terminate --pod <pod-id>
 ```
 
 | Argument / Flag | Default | Description |
 |---|---|---|
 | `pod-id` | *None* | The ID of the pod to terminate (optional positional, defaults to last created pod) |
-| `--pod` | *None* | The ID of the pod to terminate (defaults to last created pod) |
+| `-p`, `--pod` | *None* | The ID of the pod to terminate (defaults to last created pod) |
 
 ---
 
@@ -189,7 +192,7 @@ runpod-shell gpus -r "RTX 40\d0"
 ---
 
 ### 7. `exec`
-Uploads and executes an arbitrary local script on an active pod via SSH. Supports foreground streaming or detached background execution, in-memory environment variable injection, and default pod resolution.
+Uploads and executes an arbitrary local script on an active pod via SSH. Supports foreground streaming or detached background execution, in-memory environment variable injection, and default pod resolution. Automatically remembers the executed Job ID in `~/.config/runpod_shell/.last_job_id`.
 
 ```bash
 # Execute on the last created pod
@@ -197,14 +200,14 @@ runpod-shell exec <script-path> [OPTIONS]
 
 # Specify pod ID explicitly
 runpod-shell exec <pod-id> <script-path> [OPTIONS]
-runpod-shell exec --pod <pod-id> <script-path> [OPTIONS]
+runpod-shell exec -p <pod-id> <script-path> [OPTIONS]
 ```
 
 | Argument / Flag | Default | Description |
 |---|---|---|
 | `script-path` | *Required* | Path to the local script to run (or 2nd positional if pod ID is given first) |
 | `pod-id` | *None* | Optional target pod ID if passed as the first positional argument |
-| `--pod` | *None* | Target pod ID (defaults to last created pod) |
+| `-p`, `--pod` | *None* | Target pod ID (defaults to last created pod) |
 | `-e`, `--env` | *None* | Environment variable to inject into the remote process in-memory (`KEY=VALUE` or `KEY` to inherit value from local environment). Can accept multiple variables or be repeated. |
 | `--env-file`, `--env_file` | *None* | Path to local `.env` file to inject into the remote process in-memory without persisting credentials to remote disk. Can be specified multiple times. |
 | `--script-args` | `""` | String arguments to pass to the script |
@@ -216,7 +219,36 @@ runpod-shell exec --pod <pod-id> <script-path> [OPTIONS]
 
 ---
 
-### 8. `ps`
+### 8. `run`
+Executes an arbitrary command line directly (binary + args) on an active pod via SSH. Supports foreground streaming or detached background execution, in-memory environment variable injection, and default pod resolution. Automatically remembers the executed Job ID in `~/.config/runpod_shell/.last_job_id`.
+
+```bash
+# Run command on the last created pod
+runpod-shell run python3 -c "print('hello')"
+runpod-shell run nvidia-smi
+
+# Pass arguments and options to the remote command
+runpod-shell run python train.py --epochs 10 --batch-size 32
+
+# Run detached in background on a specific pod
+runpod-shell run -p <pod-id> -d python train.py
+```
+
+| Argument / Flag | Default | Description |
+|---|---|---|
+| `cmd` | *Required* | Command line to execute directly on the remote pod (binary + args) |
+| `-p`, `--pod` | *None* | Target pod ID (defaults to last created pod) |
+| `-d`, `--detach` | `False` | Run command in background without waiting / streaming |
+| `-e`, `--env` | *None* | Environment variable to inject into the remote process in-memory (`KEY=VALUE` or `KEY` to inherit value from local environment). Can accept multiple variables or be repeated. |
+| `--env-file`, `--env_file` | *None* | Path to local `.env` file to inject into the remote process in-memory without persisting credentials to remote disk. Can be specified multiple times. |
+| `--ssh-private-key-path` | *None* | Path to private SSH key (auto-detected if omitted) |
+| `--ssh-config` | *None* (or `$RUNPOD_SSH_CONFIG`) | Path to custom SSH config file (e.g. `/dev/null`, or `system`) |
+| `--no-wait-for-setup` | `False` | Do not wait for container disk setup to complete |
+| `--ssh-timeout` | `180` | Max seconds to wait for SSH and setup readiness |
+
+---
+
+### 9. `ps`
 Lists remote processes and background jobs managed by `runpod-shell` on the pod, including Job ID, PID, running/completed/failed status, start time, duration, and log file path. If `<pod-id>` is omitted, automatically targets the last created pod.
 
 ```bash
@@ -225,38 +257,41 @@ runpod-shell ps
 
 # Or specify a pod explicitly
 runpod-shell ps <pod-id>
+runpod-shell ps -p <pod-id>
 runpod-shell ps --pod <pod-id>
 ```
 
 | Argument / Flag | Default | Description |
 |---|---|---|
 | `pod-id` | *None* | Target pod ID (optional positional, defaults to last created pod) |
-| `--pod` | *None* | Target pod ID (defaults to last created pod) |
+| `-p`, `--pod` | *None* | Target pod ID (defaults to last created pod) |
 | `--ssh-private-key-path` | *None* | Path to private SSH key (auto-detected if omitted) |
 | `--ssh-config` | *None* (or `$RUNPOD_SSH_CONFIG`) | Path to custom SSH config file (e.g. `/dev/null`, or `system`) |
 
 ---
 
-### 9. `logs`
-Inspects remote execution logs with full display (`cat`), tailing the last N lines, or live streaming (`-f`). If `<pod-id>` is omitted, automatically targets the last created pod.
+### 10. `logs`
+Inspects remote execution logs with full display (`cat`), tailing the last N lines, or live streaming (`-f`). If `-p`/`--pod` or `<pod-id>` is omitted, automatically targets the last created pod. If `-j`/`--job` or `<job-id>` is omitted, automatically targets the last executed job.
 
 ```bash
-# Follow logs on the last created pod (defaults to latest active job if job-id omitted)
+# Follow logs on the last executed job on the default pod
 runpod-shell logs -f
 
 # View full logs of a specific job on the default pod
+runpod-shell logs -j <job-id>
 runpod-shell logs <job-id>
 
 # Show last 100 lines for a specific pod and job
-runpod-shell logs <pod-id> <job-id> -n 100
-runpod-shell logs --pod <pod-id> <job-id> -f
+runpod-shell logs -p <pod-id> -j <job-id> -n 100
+runpod-shell logs -p <pod-id> -j <job-id> -f
 ```
 
 | Argument / Flag | Default | Description |
 |---|---|---|
+| `-j`, `--job` | *None* | Target Job ID or PID (defaults to last executed job ID) |
+| `job-id` | *None* | Target Job ID or PID (optional positional; defaults to last executed job ID) |
 | `pod-id` | *None* | Target pod ID (optional positional, defaults to last created pod) |
-| `job-id` | *None* | Target Job ID or PID (optional positional; can be passed as single argument if pod ID is defaulted or specified via `--pod`; defaults to latest active job if omitted) |
-| `--pod` | *None* | Target pod ID (defaults to last created pod) |
+| `-p`, `--pod` | *None* | Target pod ID (defaults to last created pod) |
 | `-n`, `--tail` | *None* | Number of lines to display from end of log |
 | `-f`, `--follow` | `False` | Follow log output in real-time |
 | `--ssh-private-key-path` | *None* | Path to private SSH key (auto-detected if omitted) |
@@ -264,23 +299,27 @@ runpod-shell logs --pod <pod-id> <job-id> -f
 
 ---
 
-### 10. `kill`
-Terminates a remote job and its entire process group. By default, sends `SIGTERM` first, monitors process termination, and escalates to `SIGKILL` if the job has not exited within `--timeout` seconds. If `<pod-id>` is omitted, automatically targets the last created pod.
+### 11. `kill`
+Terminates a remote job and its entire process group. By default, sends `SIGTERM` first, monitors process termination, and escalates to `SIGKILL` if the job has not exited within `--timeout` seconds. If `-p`/`--pod` or `<pod-id>` is omitted, automatically targets the last created pod. If `-j`/`--job` or `<job-id>` is omitted, automatically targets the last executed job.
 
 ```bash
-# Kill a job on the last created pod
+# Kill the last executed job on the last created pod
+runpod-shell kill
+
+# Kill a specific job on the default pod
+runpod-shell kill -j <job-id-or-pid> [OPTIONS]
 runpod-shell kill <job-id-or-pid> [OPTIONS]
 
-# Specify pod ID explicitly
-runpod-shell kill <pod-id> <job-id-or-pid> [OPTIONS]
-runpod-shell kill --pod <pod-id> <job-id-or-pid> [OPTIONS]
+# Specify pod ID and job ID explicitly
+runpod-shell kill -p <pod-id> -j <job-id-or-pid> [OPTIONS]
 ```
 
 | Argument / Flag | Default | Description |
 |---|---|---|
-| `job-id-or-pid` | *Required* | Target Job ID or PID to kill |
+| `-j`, `--job` | *None* | Target Job ID or PID to kill (defaults to last executed job ID) |
+| `job-id-or-pid` | *None* | Target Job ID or PID to kill (optional positional, defaults to last executed job ID) |
 | `pod-id` | *None* | Target pod ID (optional positional if specified before target job/PID) |
-| `--pod` | *None* | Target pod ID (defaults to last created pod) |
+| `-p`, `--pod` | *None* | Target pod ID (defaults to last created pod) |
 | `-s`, `--signal` | `SIGTERM` | Initial signal to send (e.g. `SIGTERM`, `SIGKILL`) |
 | `-t`, `--timeout` | `15.0` | Timeout in seconds to wait before escalating from SIGTERM to SIGKILL |
 | `--ssh-private-key-path` | *None* | Path to private SSH key (auto-detected if omitted) |
@@ -310,19 +349,26 @@ runpod-shell create --template-id "runpod-pytorch" --gpu-type 4090
 runpod-shell create --volume-id "vol-abc123xyz" --requirements-path requirements.txt
 ```
 
-### Run a script with in-memory secrets and monitor jobs
+### Run commands or scripts with in-memory secrets and monitor jobs
 ```bash
-# Run detached in background, injecting credentials directly from local env without writing to remote disk
-runpod-shell exec -d -e R2_TOKEN R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY ./train.py
+# Execute a command directly in the background with in-memory credentials
+runpod-shell run -d -e R2_TOKEN R2_ACCESS_KEY_ID python train.py --epochs 50
+# Both the target Pod ID and newly launched Job ID are remembered automatically!
+
+# Or upload and run a local script
+runpod-shell exec -d ./train.py
 
 # Check process status on default pod
 runpod-shell ps
 
-# Follow logs in real-time
+# Follow logs in real-time (automatically targets the last job ID on default pod)
 runpod-shell logs -f
 
-# Terminate gracefully (sends SIGTERM, escalates to SIGKILL if still running after 15s)
-runpod-shell kill job-1788613220-1817e4
+# Or view logs for a specific job explicitly
+runpod-shell logs -j job-1788613220-1817e4 -f
+
+# Terminate gracefully (automatically targets the last job ID, or specify with -j)
+runpod-shell kill
 ```
 
 ### Fully customized creation

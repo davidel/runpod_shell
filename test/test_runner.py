@@ -271,6 +271,37 @@ class TestRunnerScript(unittest.TestCase):
       log_content = log_file.read_text()
       self.assertIn("Exit code 137 indicates process was killed via SIGKILL", log_content)
 
+  def test_runner_run_direct_command(self):
+    with tempfile.TemporaryDirectory() as td:
+      tdp = Path(td)
+      job_dir = tdp / ".runpod_jobs" / "test-cmd-1"
+      log_file = tdp / "logs" / "test-cmd-1.log"
+      log_file.parent.mkdir(parents=True, exist_ok=True)
+
+      with open(log_file, "w") as lf:
+        res = subprocess.run([
+            sys.executable,
+            str(RUNNER_PATH),
+            "run",
+            "--job-id", "test-cmd-1",
+            "--cmd", f"{sys.executable} -c \"print('direct command output')\"",
+            "--job-dir", str(job_dir),
+            "--log-file", str(log_file),
+            "--work-dir", str(tdp)
+        ], stdout=lf, stderr=subprocess.STDOUT)
+
+      self.assertEqual(res.returncode, 0)
+      log_content = log_file.read_text()
+      self.assertIn("=== RUNPOD JOB STARTED: test-cmd-1", log_content)
+      self.assertIn("direct command output", log_content)
+      self.assertIn("=== RUNPOD JOB COMPLETED: test-cmd-1", log_content)
+      self.assertIn("=== Exit Code:   0", log_content)
+
+      self.assertEqual((job_dir / "exit_code").read_text().strip(), "0")
+      meta = json.loads((job_dir / "meta.json").read_text())
+      self.assertEqual(meta["job_id"], "test-cmd-1")
+      self.assertEqual(meta["status"], "COMPLETED")
+
 
 if __name__ == "__main__":
   unittest.main()

@@ -99,24 +99,76 @@ def cmd_run(args):
 
   pid = os.getpid()
 
+  work_dir = get_base_dir()
+  if args.work_dir and os.path.isdir(args.work_dir):
+    work_dir = Path(args.work_dir)
+
+  python_executable = shutil.which("python3") or shutil.which("python") or "python3"
+
+  if getattr(args, "cmd", None):
+    cmd = shlex.split(args.cmd)
+    if args.args:
+      cmd.extend(shlex.split(args.args))
+    script_name = Path(cmd[0]).name if cmd else "command"
+    script_path_str = " ".join(shlex.quote(c) for c in cmd)
+  elif getattr(args, "script", None):
+    script_path = Path(args.script)
+    script_name = script_path.name
+    script_path_str = args.script
+    if not script_path.exists():
+      print(f"ERROR: Script not found at {script_path}", file=sys.stderr)
+      sys.stderr.flush()
+      (job_dir / "exit_code").write_text("127")
+      meta = {
+          "job_id": args.job_id,
+          "pid": pid,
+          "script": script_name,
+          "args": args.args or "",
+          "started_at": started_at,
+          "started_at_iso": started_at_iso,
+          "log_file": str(log_file),
+          "script_path": script_path_str,
+          "status": "FAILED(127)",
+          "ended_at": int(time.time())
+      }
+      meta_file = job_dir / "meta.json"
+      meta_file.write_text(json.dumps(meta, indent=2))
+      sys.exit(127)
+
+    try:
+      os.chmod(script_path, 0o755)
+    except OSError:
+      pass
+
+    if script_path.suffix == ".py":
+      cmd = [python_executable, str(script_path)]
+    elif script_path.suffix == ".sh":
+      cmd = ["/bin/bash", str(script_path)]
+    else:
+      cmd = [str(script_path)]
+
+    if args.args:
+      cmd.extend(shlex.split(args.args))
+  else:
+    print("ERROR: Neither --script nor --cmd specified", file=sys.stderr)
+    sys.stderr.flush()
+    (job_dir / "exit_code").write_text("1")
+    sys.exit(1)
+
   meta = {
       "job_id": args.job_id,
       "pid": pid,
-      "script": Path(args.script).name,
+      "script": script_name,
       "args": args.args or "",
       "started_at": started_at,
       "started_at_iso": started_at_iso,
       "log_file": str(log_file),
-      "script_path": args.script,
+      "script_path": script_path_str,
       "status": "RUNNING"
   }
   meta_file = job_dir / "meta.json"
   meta_file.write_text(json.dumps(meta, indent=2))
   (job_dir / "pid").write_text(str(pid))
-
-  work_dir = get_base_dir()
-  if args.work_dir and os.path.isdir(args.work_dir):
-    work_dir = Path(args.work_dir)
 
   # Prepare environment
   env = os.environ.copy()
@@ -130,13 +182,12 @@ def cmd_run(args):
     except Exception as e:
       print(f"WARNING: Failed to decode RUNPOD_JOB_ENV payload: {e}", file=sys.stderr)
 
-  python_executable = shutil.which("python3") or shutil.which("python") or "python3"
-
   # Log job start header
   print("=" * 80)
   print(f"=== RUNPOD JOB STARTED: {args.job_id}")
   print(f"=== Start Time:  {started_at_human}")
-  print(f"=== Script:      {args.script} {args.args or ''}".strip())
+  cmd_display = script_path_str if getattr(args, "cmd", None) else f"{args.script} {args.args or ''}".strip()
+  print(f"=== Command:     {cmd_display}")
   print(f"=== Working Dir: {work_dir}")
   print(f"=== Python:      {python_executable}")
 
@@ -157,31 +208,6 @@ def cmd_run(args):
   print("=" * 80)
   sys.stdout.flush()
 
-  script_path = Path(args.script)
-  if not script_path.exists():
-    print(f"ERROR: Script not found at {script_path}", file=sys.stderr)
-    sys.stderr.flush()
-    (job_dir / "exit_code").write_text("127")
-    meta["status"] = "FAILED(127)"
-    meta["ended_at"] = int(time.time())
-    meta_file.write_text(json.dumps(meta, indent=2))
-    sys.exit(127)
-
-  try:
-    os.chmod(script_path, 0o755)
-  except OSError:
-    pass
-
-  if script_path.suffix == ".py":
-    cmd = [python_executable, str(script_path)]
-  elif script_path.suffix == ".sh":
-    cmd = ["/bin/bash", str(script_path)]
-  else:
-    cmd = [str(script_path)]
-
-  if args.args:
-    cmd.extend(shlex.split(args.args))
-
   child = None
   try:
     child = subprocess.Popen(
@@ -193,11 +219,12 @@ def cmd_run(args):
   except Exception as e:
     print(f"ERROR: Failed to launch child process: {e}", file=sys.stderr)
     sys.stderr.flush()
-    (job_dir / "exit_code").write_text("1")
-    meta["status"] = "FAILED(1)"
+    exit_val = 127 if isinstance(e, FileNotFoundError) else 1
+    (job_dir / "exit_code").write_text(str(exit_val))
+    meta["status"] = f"FAILED({exit_val})"
     meta["ended_at"] = int(time.time())
     meta_file.write_text(json.dumps(meta, indent=2))
-    sys.exit(1)
+    sys.exit(exit_val)
 
   (job_dir / "child_pid").write_text(str(child.pid))
   meta["child_pid"] = child.pid
@@ -504,7 +531,8 @@ def main():
 
   run_p = subparsers.add_parser("run")
   run_p.add_argument("--job-id", required=True)
-  run_p.add_argument("--script", required=True)
+  run_p.add_argument("--script", default=None)
+  run_p.add_argument("--cmd", default=None)
   run_p.add_argument("--args", default="")
   run_p.add_argument("--job-dir", required=True)
   run_p.add_argument("--log-file", required=True)

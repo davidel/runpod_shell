@@ -339,6 +339,58 @@ class TestSSHRunner(unittest.TestCase):
       self.assertEqual(env.get("MY_SECRET"), "abc123xyz")
       self.assertNotIn("RUNPOD_JOB_ENV", env)
 
+  @patch("runpod_shell.ssh_runner.wait_for_ssh")
+  @patch("runpod_shell.ssh_runner.wait_for_setup")
+  @patch("subprocess.run")
+  def test_execute_remote_command_detach(self, mock_run, mock_wait_setup, mock_wait_ssh):
+    # 1. scp runner.py
+    # 2. launcher script
+    mock_run.side_effect = [
+        MagicMock(returncode=0, stdout="", stderr=""),
+        MagicMock(returncode=0, stdout="PID:54321\nLOG_FILE:/workspace/logs/job.log\nJOB_ID:job-cmd-1\n", stderr="")
+    ]
+
+    res = ssh_runner.execute_remote_command(
+        host="1.2.3.4",
+        port=22,
+        command_args=["python3", "-c", "print('hello')"],
+        detach=True,
+        extra_env={"TEST_VAR": "val"}
+    )
+
+    self.assertTrue(res["job_id"].startswith("job-"))
+    self.assertEqual(res["pid"], "54321")
+    self.assertEqual(res["log_file"], "/workspace/logs/job.log")
+    self.assertEqual(res["exit_code"], 0)
+    mock_wait_ssh.assert_called_once()
+    mock_wait_setup.assert_called_once()
+
+  @patch("runpod_shell.ssh_runner.wait_for_ssh")
+  @patch("runpod_shell.ssh_runner.wait_for_setup")
+  @patch("subprocess.run")
+  def test_execute_remote_command_foreground(self, mock_run, mock_wait_setup, mock_wait_ssh):
+    # 1. scp runner.py
+    # 2. launcher script
+    # 3. tail stream
+    # 4. exit code cat
+    mock_run.side_effect = [
+        MagicMock(returncode=0, stdout="", stderr=""),
+        MagicMock(returncode=0, stdout="PID:54321\nLOG_FILE:/workspace/logs/job.log\nJOB_ID:job-cmd-1\n", stderr=""),
+        MagicMock(returncode=0),
+        MagicMock(returncode=0, stdout="0\n", stderr="")
+    ]
+
+    res = ssh_runner.execute_remote_command(
+        host="1.2.3.4",
+        port=22,
+        command_args=["nvidia-smi"],
+        detach=False
+    )
+
+    self.assertTrue(res["job_id"].startswith("job-"))
+    self.assertEqual(res["pid"], "54321")
+    self.assertEqual(res["exit_code"], 0)
+
 
 if __name__ == "__main__":
   unittest.main()

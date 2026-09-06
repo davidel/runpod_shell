@@ -14,6 +14,7 @@ from runpod_shell.ssh_runner import (
     find_ssh_private_key,
     resolve_ssh_config,
     execute_remote_script,
+    execute_remote_command,
     list_remote_jobs,
     view_remote_logs,
     kill_remote_job,
@@ -50,6 +51,7 @@ class ParseEnv(argparse.Action):
 
 CONFIG_DIR = Path.home() / ".config" / "runpod_shell"
 LAST_POD_ID_FILE = CONFIG_DIR / ".last_pod_id"
+LAST_JOB_ID_FILE = CONFIG_DIR / ".last_job_id"
 
 
 def get_config_dir():
@@ -98,6 +100,45 @@ def clear_last_pod_id_if_match(pod_id):
     pass
 
 
+def get_last_job_id_file():
+  custom_file = os.environ.get("RUNPOD_SHELL_LAST_JOB_ID_FILE")
+  if custom_file:
+    return Path(custom_file)
+  if "RUNPOD_SHELL_CONFIG_DIR" in os.environ:
+    return get_config_dir() / ".last_job_id"
+  return LAST_JOB_ID_FILE
+
+
+def save_last_job_id(job_id):
+  try:
+    target_file = get_last_job_id_file()
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+    target_file.write_text(str(job_id).strip())
+  except Exception:
+    pass
+
+
+def get_last_job_id():
+  try:
+    target_file = get_last_job_id_file()
+    if target_file.exists():
+      jid = target_file.read_text().strip()
+      if jid:
+        return jid
+  except Exception:
+    pass
+  return None
+
+
+def clear_last_job_id_if_match(job_id):
+  try:
+    target_file = get_last_job_id_file()
+    if target_file.exists() and target_file.read_text().strip() == str(job_id).strip():
+      target_file.unlink(missing_ok=True)
+  except Exception:
+    pass
+
+
 def resolve_pod_id(args):
   pod_id = getattr(args, "pod", None) or getattr(args, "pod_id", None)
   if not pod_id:
@@ -105,9 +146,21 @@ def resolve_pod_id(args):
   if not pod_id:
     fatal(
         f"No pod ID specified and no previous pod ID found in {get_last_pod_id_file()}. "
-        "Please specify --pod <pod_id>."
+        "Please specify -p/--pod <pod_id>."
     )
   return pod_id
+
+
+def resolve_job_id(args, required=True):
+  job_id = getattr(args, "job", None)
+  if not job_id:
+    job_id = get_last_job_id()
+  if not job_id and required:
+    fatal(
+        f"No job ID specified and no previous job ID found in {get_last_job_id_file()}. "
+        "Please specify -j/--job <job_id>."
+    )
+  return job_id
 
 
 def preprocess_argv(argv):
@@ -123,7 +176,10 @@ def preprocess_argv(argv):
 
   flags_0 = {"-d", "--detach", "--no-wait-for-setup", "-h", "--help"}
   opts_1 = {
+      "-p",
       "--pod",
+      "-j",
+      "--job",
       "--script-args",
       "--ssh-private-key-path",
       "--ssh-config",
@@ -132,7 +188,7 @@ def preprocess_argv(argv):
       "--env_file"
   }
 
-  has_pod_opt = any(a == "--pod" or a.startswith("--pod=") for a in sub_args)
+  has_pod_opt = any(a in ("-p", "--pod") or a.startswith("--pod=") or a.startswith("-p=") for a in sub_args)
   has_env_flag = any(a in ("-e", "--env") for a in sub_args)
   if not has_env_flag:
     return argv
@@ -637,6 +693,8 @@ def cmd_create(args):
         ssh_timeout=getattr(args, "ssh_timeout", 180),
         ssh_config_path=ssh_config
     )
+    if res.get("job_id"):
+      save_last_job_id(res["job_id"])
     if not getattr(args, "detach", False) and res.get("exit_code", 0) != 0:
       sys.exit(res["exit_code"])
 
@@ -655,7 +713,7 @@ def cmd_exec(args):
   if not target_pod_id:
     fatal(
         f"No pod ID specified and no previous pod ID found in {get_last_pod_id_file()}. "
-        "Please specify --pod <pod_id>."
+        "Please specify -p/--pod <pod_id>."
     )
 
   print(f"Fetching connection details for pod '{target_pod_id}'...")
@@ -698,6 +756,64 @@ def cmd_exec(args):
       ssh_config_path=getattr(args, "ssh_config", None),
       extra_env=extra_env if extra_env else None
   )
+  if res.get("job_id"):
+    save_last_job_id(res["job_id"])
+  if not getattr(args, "detach", False) and res.get("exit_code", 0) != 0:
+    sys.exit(res["exit_code"])
+
+
+def cmd_run(args):
+  target_pod_id = resolve_pod_id(args)
+
+  cmd_tokens = getattr(args, "cmd", None) or []
+  if cmd_tokens and cmd_tokens[0] == "--":
+    cmd_tokens = cmd_tokens[1:]
+
+  if not cmd_tokens:
+    fatal("No command specified. Usage: runpod-shell run [OPTIONS] <command> [args...]")
+
+  print(f"Fetching connection details for pod '{target_pod_id}'...")
+  try:
+    pod_info = runpod.get_pod(target_pod_id)
+  except Exception as e:
+    fatal(f"Failed to fetch pod info: {e}", exc=e.__class__)
+
+  if not pod_info:
+    fatal(f"Pod '{target_pod_id}' not found.", FileNotFoundError)
+
+  ssh_host, ssh_port = get_pod_ssh_endpoint(pod_info)
+  if not ssh_host or not ssh_port or ssh_port == "unknown":
+    fatal(f"Could not resolve SSH endpoint for pod '{target_pod_id}'. Is the pod running and exposing port 22?")
+
+  priv_key = find_ssh_private_key(None, getattr(args, "ssh_private_key_path", None))
+  wait_setup = not getattr(args, "no_wait_for_setup", False)
+
+  # Resolve environment variables
+  extra_env = {}
+  env_files = getattr(args, "env_files", None) or []
+  if isinstance(env_files, str):
+    env_files = [env_files]
+  for ef in env_files:
+    if ef:
+      extra_env.update(parse_env_file(ef))
+
+  if getattr(args, "env", None):
+    extra_env.update(args.env)
+
+  res = execute_remote_command(
+      host=ssh_host,
+      port=ssh_port,
+      command_args=cmd_tokens,
+      detach=getattr(args, "detach", False),
+      private_key_path=priv_key,
+      wait_for_setup_flag=wait_setup,
+      ssh_timeout=getattr(args, "ssh_timeout", 180),
+      ssh_config_path=getattr(args, "ssh_config", None),
+      extra_env=extra_env if extra_env else None
+  )
+  if res.get("job_id"):
+    save_last_job_id(res["job_id"])
+
   if not getattr(args, "detach", False) and res.get("exit_code", 0) != 0:
     sys.exit(res["exit_code"])
 
@@ -743,28 +859,36 @@ def cmd_ps(args):
 
 
 def cmd_logs(args):
+  explicit_job = getattr(args, "job", None)
   if getattr(args, "pod", None):
     target_pod_id = args.pod
-    job_id = getattr(args, "arg1", None)
+    job_id = explicit_job or getattr(args, "arg1", None)
   elif getattr(args, "arg2", None):
     target_pod_id = args.arg1
-    job_id = args.arg2
+    job_id = explicit_job or args.arg2
   elif getattr(args, "arg1", None):
-    last_id = get_last_pod_id()
-    if last_id and (args.arg1.startswith("job-") or args.arg1.isdigit()):
-      target_pod_id = last_id
-      job_id = args.arg1
-    else:
+    if explicit_job:
       target_pod_id = args.arg1
-      job_id = None
+      job_id = explicit_job
+    else:
+      last_id = get_last_pod_id()
+      if last_id and (args.arg1.startswith("job-") or args.arg1.isdigit()):
+        target_pod_id = last_id
+        job_id = args.arg1
+      else:
+        target_pod_id = args.arg1
+        job_id = None
   else:
     target_pod_id = get_last_pod_id()
-    job_id = None
+    job_id = explicit_job
+
+  if not job_id:
+    job_id = get_last_job_id()
 
   if not target_pod_id:
     fatal(
         f"No pod ID specified and no previous pod ID found in {get_last_pod_id_file()}. "
-        "Please specify --pod <pod_id>."
+        "Please specify -p/--pod <pod_id>."
     )
 
   try:
@@ -792,17 +916,35 @@ def cmd_logs(args):
 
 
 def cmd_kill(args):
+  explicit_job = getattr(args, "job", None)
+  target_pod_id = getattr(args, "pod", None)
+  target = explicit_job
+
   if getattr(args, "maybe_target", None):
-    target_pod_id = getattr(args, "pod", None) or args.target_or_pod
-    target = args.maybe_target
-  else:
-    target_pod_id = getattr(args, "pod", None) or get_last_pod_id()
-    target = getattr(args, "target_or_pod", None) or getattr(args, "target", None)
+    target_pod_id = target_pod_id or args.target_or_pod
+    target = target or args.maybe_target
+  elif getattr(args, "target_or_pod", None):
+    if target:
+      target_pod_id = target_pod_id or args.target_or_pod
+    else:
+      target = args.target_or_pod
+
+  if not target:
+    target = get_last_job_id()
+
+  if not target:
+    fatal(
+        f"No job ID specified and no previous job ID found in {get_last_job_id_file()}. "
+        "Please specify -j/--job <job_id>."
+    )
+
+  if not target_pod_id:
+    target_pod_id = get_last_pod_id()
 
   if not target_pod_id:
     fatal(
         f"No pod ID specified and no previous pod ID found in {get_last_pod_id_file()}. "
-        "Please specify --pod <pod_id>."
+        "Please specify -p/--pod <pod_id>."
     )
 
   try:
@@ -827,6 +969,7 @@ def cmd_kill(args):
       private_key_path=priv_key,
       ssh_config_path=getattr(args, "ssh_config", None)
   )
+  clear_last_job_id_if_match(target)
 
 
 def cmd_list(args):
@@ -1217,6 +1360,7 @@ def main(args=None):
   # Exec Command
   exec_parser = subparsers.add_parser("exec", help="Execute a local script on an active RunPod instance via SSH")
   exec_parser.add_argument(
+      "-p",
       "--pod",
       dest="pod",
       default=None,
@@ -1286,9 +1430,72 @@ def main(args=None):
       help="Path to a file containing environment variables (KEY=VALUE format). Can be specified multiple times."
   )
 
+  # Run Command
+  run_parser = subparsers.add_parser("run", help="Run a command directly (binary + args) on an active RunPod instance via SSH")
+  run_parser.add_argument(
+      "-p",
+      "--pod",
+      dest="pod",
+      default=None,
+      help="The ID of the target pod (defaults to last created pod)"
+  )
+  run_parser.add_argument(
+      "-d",
+      "--detach",
+      dest="detach",
+      action="store_true",
+      help="Run the command in background on the pod without waiting"
+  )
+  run_parser.add_argument(
+      "--ssh-private-key-path",
+      dest="ssh_private_key_path",
+      help="Path to private SSH key (auto-detected if omitted)"
+  )
+  run_parser.add_argument(
+      "--ssh-config",
+      dest="ssh_config",
+      default=os.environ.get("RUNPOD_SSH_CONFIG"),
+      help="Path to custom SSH config file (e.g. /dev/null), or RUNPOD_SSH_CONFIG env var"
+  )
+  run_parser.add_argument(
+      "--no-wait-for-setup",
+      dest="no_wait_for_setup",
+      action="store_true",
+      help="Do not wait for container disk setup to finish before executing command"
+  )
+  run_parser.add_argument(
+      "--ssh-timeout",
+      dest="ssh_timeout",
+      type=int,
+      default=180,
+      help="Max seconds to wait for SSH and setup readiness (default: %(default)s)"
+  )
+  run_parser.add_argument(
+      "-e",
+      "--env",
+      dest="env",
+      action=ParseEnv,
+      default={},
+      help="Environment variable to set for the remote command (KEY=VALUE or KEY to extract from local environment). Can be specified multiple times."
+  )
+  run_parser.add_argument(
+      "--env-file",
+      "--env_file",
+      dest="env_files",
+      action="append",
+      default=[],
+      help="Path to a file containing environment variables (KEY=VALUE format). Can be specified multiple times."
+  )
+  run_parser.add_argument(
+      "cmd",
+      nargs=argparse.REMAINDER,
+      help="Command line to execute directly on the remote pod (binary + args)"
+  )
+
   # Ps Command
   ps_parser = subparsers.add_parser("ps", help="List remote processes and managed jobs on a RunPod instance")
   ps_parser.add_argument(
+      "-p",
       "--pod",
       dest="pod",
       default=None,
@@ -1315,10 +1522,18 @@ def main(args=None):
   # Logs Command
   logs_parser = subparsers.add_parser("logs", help="View remote logs of managed jobs on a RunPod instance")
   logs_parser.add_argument(
+      "-p",
       "--pod",
       dest="pod",
       default=None,
       help="The ID of the pod (defaults to last created pod)"
+  )
+  logs_parser.add_argument(
+      "-j",
+      "--job",
+      dest="job",
+      default=None,
+      help="The Job ID or PID (defaults to last job ID)"
   )
   logs_parser.add_argument(
       "arg1",
@@ -1362,14 +1577,24 @@ def main(args=None):
   # Kill Command
   kill_parser = subparsers.add_parser("kill", help="Kill a remote job or process on a RunPod instance")
   kill_parser.add_argument(
+      "-p",
       "--pod",
       dest="pod",
       default=None,
       help="The ID of the pod (defaults to last created pod)"
   )
   kill_parser.add_argument(
+      "-j",
+      "--job",
+      dest="job",
+      default=None,
+      help="The Job ID or PID to kill (defaults to last job ID)"
+  )
+  kill_parser.add_argument(
       "target_or_pod",
-      help="The Job ID or PID to kill, or pod ID if target follows"
+      nargs="?",
+      default=None,
+      help="The Job ID or PID to kill, or pod ID if target follows (optional, defaults to last job ID)"
   )
   kill_parser.add_argument(
       "maybe_target",
@@ -1410,6 +1635,7 @@ def main(args=None):
   # Stop Command
   stop_parser = subparsers.add_parser("stop", help="Stop a running RunPod instance")
   stop_parser.add_argument(
+      "-p",
       "--pod",
       dest="pod",
       default=None,
@@ -1425,6 +1651,7 @@ def main(args=None):
   # Terminate Command
   terminate_parser = subparsers.add_parser("terminate", help="Terminate (delete) a RunPod instance")
   terminate_parser.add_argument(
+      "-p",
       "--pod",
       dest="pod",
       default=None,
@@ -1490,6 +1717,8 @@ def main(args=None):
 
   if args.command == "create":
     cmd_create(args)
+  elif args.command == "run":
+    cmd_run(args)
   elif args.command == "list":
     cmd_list(args)
   elif args.command == "stop":
