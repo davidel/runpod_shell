@@ -120,7 +120,13 @@ runpod-shell templates
 # Filter templates by pattern (case-insensitive regex)
 runpod-shell templates pytorch
 runpod-shell templates "vllm|tgi"
+runpod-shell templates -r "pytorch|cuda"
 ```
+
+| Argument / Flag | Default | Description |
+|---|---|---|
+| `filter` | *None* | Optional regex pattern to filter templates by ID, Name, or Image (case-insensitive) |
+| `-r`, `--regex`, `--filter` | *None* | Optional regex pattern to filter templates by ID, Name, or Image (case-insensitive) |
 
 ---
 
@@ -136,6 +142,11 @@ runpod-shell stop <pod-id>
 runpod-shell stop --pod <pod-id>
 ```
 
+| Argument / Flag | Default | Description |
+|---|---|---|
+| `pod-id` | *None* | The ID of the pod to stop (optional positional, defaults to last created pod) |
+| `--pod` | *None* | The ID of the pod to stop (defaults to last created pod) |
+
 ---
 
 ### 5. `terminate`
@@ -149,6 +160,11 @@ runpod-shell terminate
 runpod-shell terminate <pod-id>
 runpod-shell terminate --pod <pod-id>
 ```
+
+| Argument / Flag | Default | Description |
+|---|---|---|
+| `pod-id` | *None* | The ID of the pod to terminate (optional positional, defaults to last created pod) |
+| `--pod` | *None* | The ID of the pod to terminate (defaults to last created pod) |
 
 ---
 
@@ -165,6 +181,11 @@ runpod-shell gpus "A100|H100"
 runpod-shell gpus -r "RTX 40\d0"
 ```
 
+| Argument / Flag | Default | Description |
+|---|---|---|
+| `filter` | *None* | Optional regex pattern to filter GPUs by ID or Display Name (case-insensitive) |
+| `-r`, `--regex`, `--filter` | *None* | Optional regex pattern to filter GPUs by ID or Display Name (case-insensitive) |
+
 ---
 
 ### 7. `exec`
@@ -179,11 +200,13 @@ runpod-shell exec <pod-id> <script-path> [OPTIONS]
 runpod-shell exec --pod <pod-id> <script-path> [OPTIONS]
 ```
 
-| Flag | Default | Description |
+| Argument / Flag | Default | Description |
 |---|---|---|
+| `script-path` | *Required* | Path to the local script to run (or 2nd positional if pod ID is given first) |
+| `pod-id` | *None* | Optional target pod ID if passed as the first positional argument |
 | `--pod` | *None* | Target pod ID (defaults to last created pod) |
 | `-e`, `--env` | *None* | Environment variable to inject into the remote process in-memory (`KEY=VALUE` or `KEY` to inherit value from local environment). Can accept multiple variables or be repeated. |
-| `--env-file` | *None* | Path to local `.env` file to inject into the remote process in-memory without persisting credentials to remote disk |
+| `--env-file`, `--env_file` | *None* | Path to local `.env` file to inject into the remote process in-memory without persisting credentials to remote disk. Can be specified multiple times. |
 | `--script-args` | `""` | String arguments to pass to the script |
 | `-d`, `--detach` | `False` | Run script in background without waiting / streaming |
 | `--ssh-private-key-path` | *None* | Path to private SSH key (auto-detected if omitted) |
@@ -205,8 +228,9 @@ runpod-shell ps <pod-id>
 runpod-shell ps --pod <pod-id>
 ```
 
-| Flag | Default | Description |
+| Argument / Flag | Default | Description |
 |---|---|---|
+| `pod-id` | *None* | Target pod ID (optional positional, defaults to last created pod) |
 | `--pod` | *None* | Target pod ID (defaults to last created pod) |
 | `--ssh-private-key-path` | *None* | Path to private SSH key (auto-detected if omitted) |
 | `--ssh-config` | *None* (or `$RUNPOD_SSH_CONFIG`) | Path to custom SSH config file (e.g. `/dev/null`, or `system`) |
@@ -228,8 +252,10 @@ runpod-shell logs <pod-id> <job-id> -n 100
 runpod-shell logs --pod <pod-id> <job-id> -f
 ```
 
-| Flag | Default | Description |
+| Argument / Flag | Default | Description |
 |---|---|---|
+| `pod-id` | *None* | Target pod ID (optional positional, defaults to last created pod) |
+| `job-id` | *None* | Target Job ID or PID (optional positional; can be passed as single argument if pod ID is defaulted or specified via `--pod`; defaults to latest active job if omitted) |
 | `--pod` | *None* | Target pod ID (defaults to last created pod) |
 | `-n`, `--tail` | *None* | Number of lines to display from end of log |
 | `-f`, `--follow` | `False` | Follow log output in real-time |
@@ -250,8 +276,10 @@ runpod-shell kill <pod-id> <job-id-or-pid> [OPTIONS]
 runpod-shell kill --pod <pod-id> <job-id-or-pid> [OPTIONS]
 ```
 
-| Flag | Default | Description |
+| Argument / Flag | Default | Description |
 |---|---|---|
+| `job-id-or-pid` | *Required* | Target Job ID or PID to kill |
+| `pod-id` | *None* | Target pod ID (optional positional if specified before target job/PID) |
 | `--pod` | *None* | Target pod ID (defaults to last created pod) |
 | `-s`, `--signal` | `SIGTERM` | Initial signal to send (e.g. `SIGTERM`, `SIGKILL`) |
 | `-t`, `--timeout` | `15.0` | Timeout in seconds to wait before escalating from SIGTERM to SIGKILL |
