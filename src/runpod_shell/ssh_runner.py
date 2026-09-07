@@ -150,15 +150,17 @@ def ensure_remote_runner(host, port, private_key_path=None, ssh_config_path=None
   return REMOTE_RUNNER_PATH
 
 
-def wait_for_ssh(host, port, private_key_path=None, timeout=180, interval=3, ssh_config_path=None):
-  print(f"Waiting for SSH daemon at {host}:{port} to become available...")
+def wait_for_ssh(host, port, private_key_path=None, timeout=180, interval=3, ssh_config_path=None, verbose=False):
+  if verbose:
+    print(f"Waiting for SSH daemon at {host}:{port} to become available...", file=sys.stderr)
   start_time = time.time()
   while time.time() - start_time < timeout:
     cmd = build_ssh_cmd(host, port, "true", private_key_path=private_key_path, ssh_config_path=ssh_config_path)
     try:
       res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
       if res.returncode == 0:
-        print("SSH connection established successfully.")
+        if verbose:
+          print("SSH connection established successfully.", file=sys.stderr)
         return True
     except (subprocess.TimeoutExpired, subprocess.SubprocessError):
       pass
@@ -166,8 +168,9 @@ def wait_for_ssh(host, port, private_key_path=None, timeout=180, interval=3, ssh
   raise TimeoutError(f"Timed out waiting for SSH daemon at {host}:{port} after {timeout} seconds.")
 
 
-def wait_for_setup(host, port, private_key_path=None, timeout=300, interval=5, ssh_config_path=None):
-  print("Waiting for container disk and environment setup to complete...")
+def wait_for_setup(host, port, private_key_path=None, timeout=300, interval=5, ssh_config_path=None, verbose=False):
+  if verbose:
+    print("Waiting for container disk and environment setup to complete...", file=sys.stderr)
   check_cmd = "test -f /workspace/.setup_complete || test -f /tmp/.setup_complete"
   start_time = time.time()
   while time.time() - start_time < timeout:
@@ -175,7 +178,8 @@ def wait_for_setup(host, port, private_key_path=None, timeout=300, interval=5, s
     try:
       res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
       if res.returncode == 0:
-        print("Container environment setup is complete.")
+        if verbose:
+          print("Container environment setup is complete.", file=sys.stderr)
         return True
     except (subprocess.TimeoutExpired, subprocess.SubprocessError):
       pass
@@ -193,23 +197,25 @@ def execute_remote_script(
     wait_for_setup_flag=True,
     ssh_timeout=180,
     ssh_config_path=None,
-    extra_env=None
+    extra_env=None,
+    verbose=False
 ):
   local_path = Path(script_path).expanduser()
   if not local_path.exists():
     raise FileNotFoundError(f"Local script not found at {local_path}")
 
-  wait_for_ssh(host, port, private_key_path=private_key_path, timeout=ssh_timeout, ssh_config_path=ssh_config_path)
+  wait_for_ssh(host, port, private_key_path=private_key_path, timeout=ssh_timeout, ssh_config_path=ssh_config_path, verbose=verbose)
 
   if wait_for_setup_flag:
-    wait_for_setup(host, port, private_key_path=private_key_path, timeout=ssh_timeout, ssh_config_path=ssh_config_path)
+    wait_for_setup(host, port, private_key_path=private_key_path, timeout=ssh_timeout, ssh_config_path=ssh_config_path, verbose=verbose)
 
   ensure_remote_runner(host, port, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
 
   job_id = f"job-{int(time.time())}-{uuid.uuid4().hex[:6]}"
   remote_script_path = f"/tmp/{job_id}_{local_path.name}"
 
-  print(f"Uploading script '{local_path.name}' to remote pod...")
+  if verbose:
+    print(f"Uploading script '{local_path.name}' to remote pod...", file=sys.stderr)
   scp_cmd = build_scp_cmd(local_path, remote_script_path, host, port, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
   upload_res = subprocess.run(scp_cmd, capture_output=True, text=True)
   if upload_res.returncode != 0:
@@ -220,6 +226,8 @@ def execute_remote_script(
     env_json = json.dumps(extra_env)
     env_b64 = base64.b64encode(env_json.encode("utf-8")).decode("ascii")
     env_payload_line = f'export RUNPOD_JOB_ENV="{env_b64}"\n'
+
+  verbose_flag = "--verbose \\\n  " if verbose else ""
 
   # Launcher command on remote host
   launcher_script = f"""{env_payload_line}chmod +x "{remote_script_path}"
@@ -236,7 +244,7 @@ setsid nohup python3 {REMOTE_RUNNER_PATH} run \\
   --job-id "{job_id}" \\
   --script "{remote_script_path}" \\
   --args {shlex.quote(script_args)} \\
-  --job-dir "$JOBS_DIR" \\
+  {verbose_flag}--job-dir "$JOBS_DIR" \\
   --log-file "$LOG_FILE" \\
   --work-dir "$BASE_DIR" > "$LOG_FILE" 2>&1 &
 
@@ -259,18 +267,23 @@ echo "JOB_ID:{job_id}"
     elif line.startswith("LOG_FILE:"):
       log_file = line.split("LOG_FILE:", 1)[1].strip()
 
-  print(f"\nRemote job registered:")
-  print(f"  Job ID:   {job_id}")
-  print(f"  PID:      {pid}")
-  print(f"  Log file: {log_file}")
+  if verbose:
+    print(f"\nRemote job registered:", file=sys.stderr)
+    print(f"  Job ID:   {job_id}", file=sys.stderr)
+    print(f"  PID:      {pid}", file=sys.stderr)
+    print(f"  Log file: {log_file}", file=sys.stderr)
 
   if detach:
-    print(f"\nScript is running in background.")
-    print(f"To monitor logs: runpod-shell logs [--pod <pod-id>] {job_id} -f")
+    if verbose:
+      print(f"\nScript is running in background.", file=sys.stderr)
+      print(f"To monitor logs: runpod-shell logs [--pod <pod-id>] {job_id} -f", file=sys.stderr)
+    else:
+      print(job_id)
     return {"job_id": job_id, "pid": pid, "log_file": log_file, "exit_code": 0}
 
   # Foreground mode: stream logs until completion
-  print("\nStreaming remote logs (Ctrl+C to detach without stopping job)...")
+  if verbose:
+    print("\nStreaming remote logs (Ctrl+C to detach without stopping job)...", file=sys.stderr)
   tail_part = f"tail -n +1 -s 0.2 --pid={pid} -f '{log_file}' 2>/dev/null || tail -n +1 -f '{log_file}'"
   remote_cmd = f"bash -c '{tail_part} & TPID=$!; trap \"kill -9 $TPID 2>/dev/null\" EXIT INT TERM HUP; wait $TPID'"
   tail_cmd = build_ssh_cmd(
@@ -284,8 +297,9 @@ echo "JOB_ID:{job_id}"
   try:
     subprocess.run(tail_cmd)
   except KeyboardInterrupt:
-    print(f"\nDetached from remote process {pid}. Job continues running in background.")
-    print(f"To re-attach: runpod-shell logs [--pod <pod-id>] {job_id} -f")
+    if verbose:
+      print(f"\nDetached from remote process {pid}. Job continues running in background.", file=sys.stderr)
+      print(f"To re-attach: runpod-shell logs [--pod <pod-id>] {job_id} -f", file=sys.stderr)
     return {"job_id": job_id, "pid": pid, "log_file": log_file, "exit_code": 0}
 
   # Check final exit code
@@ -300,7 +314,8 @@ echo "JOB_ID:{job_id}"
   exit_code_str = code_res.stdout.strip()
   exit_code = int(exit_code_str) if exit_code_str.isdigit() else 0
 
-  print(f"\nRemote job completed with exit code: {exit_code}")
+  if verbose:
+    print(f"\nRemote job completed with exit code: {exit_code}", file=sys.stderr)
   return {"job_id": job_id, "pid": pid, "log_file": log_file, "exit_code": exit_code}
 
 
@@ -314,7 +329,8 @@ def execute_remote_command(
     ssh_timeout=180,
     ssh_config_path=None,
     extra_env=None,
-    use_shell=False
+    use_shell=False,
+    verbose=False
 ):
   if use_shell:
     if isinstance(command_args, (list, tuple)):
@@ -337,10 +353,10 @@ def execute_remote_command(
 
   binary_name = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', binary_name) or "cmd"
 
-  wait_for_ssh(host, port, private_key_path=private_key_path, timeout=ssh_timeout, ssh_config_path=ssh_config_path)
+  wait_for_ssh(host, port, private_key_path=private_key_path, timeout=ssh_timeout, ssh_config_path=ssh_config_path, verbose=verbose)
 
   if wait_for_setup_flag:
-    wait_for_setup(host, port, private_key_path=private_key_path, timeout=ssh_timeout, ssh_config_path=ssh_config_path)
+    wait_for_setup(host, port, private_key_path=private_key_path, timeout=ssh_timeout, ssh_config_path=ssh_config_path, verbose=verbose)
 
   ensure_remote_runner(host, port, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
 
@@ -353,6 +369,7 @@ def execute_remote_command(
     env_payload_line = f'export RUNPOD_JOB_ENV="{env_b64}"\n'
 
   shell_flag = "--shell \\\n  " if use_shell else ""
+  verbose_flag = "--verbose \\\n  " if verbose else ""
 
   # Launcher command on remote host
   launcher_script = f"""{env_payload_line}BASE_DIR="/workspace"
@@ -366,7 +383,7 @@ LOG_FILE="$LOGS_DIR/{job_id}_{binary_name}.log"
 
 setsid nohup python3 {REMOTE_RUNNER_PATH} run \\
   --job-id "{job_id}" \\
-  {shell_flag}--cmd {shlex.quote(cmd_str)} \\
+  {shell_flag}{verbose_flag}--cmd {shlex.quote(cmd_str)} \\
   --job-dir "$JOBS_DIR" \\
   --log-file "$LOG_FILE" \\
   --work-dir "$BASE_DIR" > "$LOG_FILE" 2>&1 &
@@ -390,18 +407,23 @@ echo "JOB_ID:{job_id}"
     elif line.startswith("LOG_FILE:"):
       log_file = line.split("LOG_FILE:", 1)[1].strip()
 
-  print(f"\nRemote job registered:")
-  print(f"  Job ID:   {job_id}")
-  print(f"  PID:      {pid}")
-  print(f"  Log file: {log_file}")
+  if verbose:
+    print(f"\nRemote job registered:", file=sys.stderr)
+    print(f"  Job ID:   {job_id}", file=sys.stderr)
+    print(f"  PID:      {pid}", file=sys.stderr)
+    print(f"  Log file: {log_file}", file=sys.stderr)
 
   if detach:
-    print(f"\nCommand is running in background.")
-    print(f"To monitor logs: runpod-shell logs [-p <pod-id>] [-j <job-id>] -f")
+    if verbose:
+      print(f"\nCommand is running in background.", file=sys.stderr)
+      print(f"To monitor logs: runpod-shell logs [-p <pod-id>] [-j <job-id>] -f", file=sys.stderr)
+    else:
+      print(job_id)
     return {"job_id": job_id, "pid": pid, "log_file": log_file, "exit_code": 0}
 
   # Foreground mode: stream logs until completion
-  print("\nStreaming remote logs (Ctrl+C to detach without stopping job)...")
+  if verbose:
+    print("\nStreaming remote logs (Ctrl+C to detach without stopping job)...", file=sys.stderr)
   tail_part = f"tail -n +1 -s 0.2 --pid={pid} -f '{log_file}' 2>/dev/null || tail -n +1 -f '{log_file}'"
   remote_cmd = f"bash -c '{tail_part} & TPID=$!; trap \"kill -9 $TPID 2>/dev/null\" EXIT INT TERM HUP; wait $TPID'"
   tail_cmd = build_ssh_cmd(
@@ -415,8 +437,9 @@ echo "JOB_ID:{job_id}"
   try:
     subprocess.run(tail_cmd)
   except KeyboardInterrupt:
-    print(f"\nDetached from remote process {pid}. Job continues running in background.")
-    print(f"To re-attach: runpod-shell logs [-p <pod-id>] [-j <job-id>] -f")
+    if verbose:
+      print(f"\nDetached from remote process {pid}. Job continues running in background.", file=sys.stderr)
+      print(f"To re-attach: runpod-shell logs [-p <pod-id>] [-j <job-id>] -f", file=sys.stderr)
     return {"job_id": job_id, "pid": pid, "log_file": log_file, "exit_code": 0}
 
   # Check final exit code
@@ -431,7 +454,8 @@ echo "JOB_ID:{job_id}"
   exit_code_str = code_res.stdout.strip()
   exit_code = int(exit_code_str) if exit_code_str.isdigit() else 0
 
-  print(f"\nRemote job completed with exit code: {exit_code}")
+  if verbose:
+    print(f"\nRemote job completed with exit code: {exit_code}", file=sys.stderr)
   return {"job_id": job_id, "pid": pid, "log_file": log_file, "exit_code": exit_code}
 
 
@@ -454,7 +478,7 @@ def list_remote_jobs(host, port, private_key_path=None, ssh_config_path=None):
     return []
 
 
-def view_remote_logs(host, port, job_id=None, tail_lines=None, follow=False, private_key_path=None, ssh_config_path=None):
+def view_remote_logs(host, port, job_id=None, tail_lines=None, follow=False, private_key_path=None, ssh_config_path=None, verbose=False):
   jobs = list_remote_jobs(host, port, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
   target_job = None
 
@@ -467,14 +491,17 @@ def view_remote_logs(host, port, job_id=None, tail_lines=None, follow=False, pri
       raise ValueError(f"Job '{job_id}' not found on pod.")
   else:
     if not jobs:
-      print("No jobs found on pod.")
+      if verbose:
+        print("No jobs found on pod.", file=sys.stderr)
       return
     if len(jobs) == 1:
       target_job = jobs[0]
-      print(f"Selecting only active job: {target_job['job_id']}")
+      if verbose:
+        print(f"Selecting only active job: {target_job['job_id']}", file=sys.stderr)
     else:
       target_job = jobs[0]
-      print(f"Selecting most recent job: {target_job['job_id']} (use job-id to view others)")
+      if verbose:
+        print(f"Selecting most recent job: {target_job['job_id']} (use job-id to view others)", file=sys.stderr)
 
   log_file = target_job.get("log_file")
   if not log_file:
@@ -486,7 +513,8 @@ def view_remote_logs(host, port, job_id=None, tail_lines=None, follow=False, pri
   if follow:
     n = tail_lines if tail_lines else 50
     if status and status != "RUNNING":
-      print(f"Job '{target_job.get('job_id')}' has finished with status: {status} (exit code: {target_job.get('exit_code', 'unknown')}).")
+      if verbose:
+        print(f"Job '{target_job.get('job_id')}' has finished with status: {status} (exit code: {target_job.get('exit_code', 'unknown')}).", file=sys.stderr)
       remote_cmd = f"tail -n {n} '{log_file}'"
     else:
       if pid:
@@ -510,7 +538,8 @@ def view_remote_logs(host, port, job_id=None, tail_lines=None, follow=False, pri
   try:
     subprocess.run(cmd)
   except KeyboardInterrupt:
-    print("\nDetached from log stream.")
+    if verbose:
+      print("\nDetached from log stream.", file=sys.stderr)
 
 
 def kill_remote_job(host, port, target_id, signal_name="SIGTERM", timeout=15.0, private_key_path=None, ssh_config_path=None):

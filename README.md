@@ -228,6 +228,7 @@ runpod-shell exec -p <pod-id> <script-path> [OPTIONS]
 | `--ssh-config` | *None* (or `$RUNPOD_SSH_CONFIG`) | Path to custom SSH config file (e.g. `/dev/null`, or `system`) |
 | `--no-wait-for-setup` | `False` | Do not wait for container disk setup to complete |
 | `--ssh-timeout` | `180` | Max seconds to wait for SSH and setup readiness |
+| `-v`, `--verbose` | `False` | Show detailed job information and connection progress |
 
 ---
 
@@ -262,6 +263,7 @@ runpod-shell run -p <pod-id> -d python train.py
 | `--ssh-config` | *None* (or `$RUNPOD_SSH_CONFIG`) | Path to custom SSH config file (e.g. `/dev/null`, or `system`) |
 | `--no-wait-for-setup` | `False` | Do not wait for container disk setup to complete |
 | `--ssh-timeout` | `180` | Max seconds to wait for SSH and setup readiness |
+| `-v`, `--verbose` | `False` | Show detailed job information and connection progress |
 
 ---
 
@@ -311,6 +313,7 @@ runpod-shell logs -p <pod-id> -j <job-id> -f
 | `-p`, `--pod` | *None* | Target pod ID (defaults to last created pod) |
 | `-n`, `--tail` | *None* | Number of lines to display from end of log |
 | `-f`, `--follow` | `False` | Follow log output in real-time |
+| `-v`, `--verbose` | `False` | Show detailed job information |
 | `--ssh-private-key-path` | *None* | Path to private SSH key (auto-detected if omitted) |
 | `--ssh-config` | *None* (or `$RUNPOD_SSH_CONFIG`) | Path to custom SSH config file (e.g. `/dev/null`, or `system`) |
 

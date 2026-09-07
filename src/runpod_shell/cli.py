@@ -175,7 +175,7 @@ def preprocess_argv(argv):
   prefix = argv[:exec_idx + 1]
   sub_args = argv[exec_idx + 1:]
 
-  flags_0 = {"-d", "--detach", "--no-wait-for-setup", "-h", "--help"}
+  flags_0 = {"-d", "--detach", "--no-wait-for-setup", "-v", "--verbose", "-h", "--help"}
   opts_1 = {
       "-p",
       "--pod",
@@ -717,7 +717,9 @@ def cmd_exec(args):
         "Please specify -p/--pod <pod_id>."
     )
 
-  print(f"Fetching connection details for pod '{target_pod_id}'...")
+  verbose = getattr(args, "verbose", False)
+  if verbose:
+    print(f"Fetching connection details for pod '{target_pod_id}'...", file=sys.stderr)
   try:
     pod_info = runpod.get_pod(target_pod_id)
   except Exception as e:
@@ -755,7 +757,8 @@ def cmd_exec(args):
       wait_for_setup_flag=wait_setup,
       ssh_timeout=getattr(args, "ssh_timeout", 180),
       ssh_config_path=getattr(args, "ssh_config", None),
-      extra_env=extra_env if extra_env else None
+      extra_env=extra_env if extra_env else None,
+      verbose=verbose
   )
   if res.get("job_id"):
     save_last_job_id(res["job_id"])
@@ -773,7 +776,9 @@ def cmd_run(args):
   if not cmd_tokens:
     fatal("No command specified. Usage: runpod-shell run [OPTIONS] <command> [args...]")
 
-  print(f"Fetching connection details for pod '{target_pod_id}'...")
+  verbose = getattr(args, "verbose", False)
+  if verbose:
+    print(f"Fetching connection details for pod '{target_pod_id}'...", file=sys.stderr)
   try:
     pod_info = runpod.get_pod(target_pod_id)
   except Exception as e:
@@ -811,7 +816,8 @@ def cmd_run(args):
       ssh_timeout=getattr(args, "ssh_timeout", 180),
       ssh_config_path=getattr(args, "ssh_config", None),
       extra_env=extra_env if extra_env else None,
-      use_shell=getattr(args, "use_shell", False)
+      use_shell=getattr(args, "use_shell", False),
+      verbose=verbose
   )
   if res.get("job_id"):
     save_last_job_id(res["job_id"])
@@ -999,7 +1005,8 @@ def cmd_logs(args):
       tail_lines=args.tail,
       follow=args.follow,
       private_key_path=priv_key,
-      ssh_config_path=getattr(args, "ssh_config", None)
+      ssh_config_path=getattr(args, "ssh_config", None),
+      verbose=getattr(args, "verbose", False)
   )
 
 
@@ -1517,6 +1524,14 @@ def main(args=None):
       default=[],
       help="Path to a file containing environment variables (KEY=VALUE format). Can be specified multiple times."
   )
+  exec_parser.add_argument(
+      "-v",
+      "--verbose",
+      dest="verbose",
+      action="store_true",
+      default=False,
+      help="Show detailed job information and connection progress"
+  )
 
   # Run Command
   run_parser = subparsers.add_parser("run", help="Run a command directly (binary + args) on an active RunPod instance via SSH")
@@ -1580,6 +1595,14 @@ def main(args=None):
       dest="use_shell",
       action="store_true",
       help="Execute command within a remote shell (enables wildcards, pipes, redirects)"
+  )
+  run_parser.add_argument(
+      "-v",
+      "--verbose",
+      dest="verbose",
+      action="store_true",
+      default=False,
+      help="Show detailed job information and connection progress"
   )
   run_parser.add_argument(
       "cmd",
@@ -1715,6 +1738,14 @@ def main(args=None):
       dest="ssh_config",
       default=os.environ.get("RUNPOD_SSH_CONFIG"),
       help="Path to custom SSH config file (e.g. /dev/null), or RUNPOD_SSH_CONFIG env var"
+  )
+  logs_parser.add_argument(
+      "-v",
+      "--verbose",
+      dest="verbose",
+      action="store_true",
+      default=False,
+      help="Show detailed job information and connection progress"
   )
 
   # Kill Command

@@ -32,7 +32,8 @@ class TestRunnerScript(unittest.TestCase):
             "--script", str(script),
             "--job-dir", str(job_dir),
             "--log-file", str(log_file),
-            "--work-dir", str(tdp)
+            "--work-dir", str(tdp),
+            "-v"
         ], stdout=lf, stderr=subprocess.STDOUT)
 
       self.assertEqual(res.returncode, 0)
@@ -242,8 +243,7 @@ class TestRunnerScript(unittest.TestCase):
 
       self.assertEqual(res.returncode, 0)
       log_content = log_file.read_text()
-      self.assertIn("python executed without shebang", log_content)
-      self.assertIn("=== Exit Code:   0", log_content)
+      self.assertEqual(log_content.strip(), "python executed without shebang")
 
   def test_runner_oom_notice(self):
     with tempfile.TemporaryDirectory() as td:
@@ -287,7 +287,8 @@ class TestRunnerScript(unittest.TestCase):
             "--cmd", f"{sys.executable} -c \"print('direct command output')\"",
             "--job-dir", str(job_dir),
             "--log-file", str(log_file),
-            "--work-dir", str(tdp)
+            "--work-dir", str(tdp),
+            "-v"
         ], stdout=lf, stderr=subprocess.STDOUT)
 
       self.assertEqual(res.returncode, 0)
@@ -322,7 +323,8 @@ class TestRunnerScript(unittest.TestCase):
             "--cmd", "ls alpha_*.txt | wc -l",
             "--job-dir", str(job_dir),
             "--log-file", str(log_file),
-            "--work-dir", str(tdp)
+            "--work-dir", str(tdp),
+            "-v"
         ], stdout=lf, stderr=subprocess.STDOUT)
 
       self.assertEqual(res.returncode, 0)

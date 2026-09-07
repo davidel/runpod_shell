@@ -191,31 +191,33 @@ def cmd_run(args):
     except Exception as e:
       print(f"WARNING: Failed to decode RUNPOD_JOB_ENV payload: {e}", file=sys.stderr)
 
-  # Log job start header
-  print("=" * 80)
-  print(f"=== RUNPOD JOB STARTED: {args.job_id}")
-  print(f"=== Start Time:  {started_at_human}")
-  cmd_display = script_path_str if getattr(args, "cmd", None) else f"{args.script} {args.args or ''}".strip()
-  print(f"=== Command:     {cmd_display}")
-  print(f"=== Working Dir: {work_dir}")
-  print(f"=== Python:      {python_executable}")
+  verbose = getattr(args, "verbose", False)
+  if verbose:
+    # Log job start header
+    print("=" * 80, file=sys.stderr)
+    print(f"=== RUNPOD JOB STARTED: {args.job_id}", file=sys.stderr)
+    print(f"=== Start Time:  {started_at_human}", file=sys.stderr)
+    cmd_display = script_path_str if getattr(args, "cmd", None) else f"{args.script} {args.args or ''}".strip()
+    print(f"=== Command:     {cmd_display}", file=sys.stderr)
+    print(f"=== Working Dir: {work_dir}", file=sys.stderr)
+    print(f"=== Python:      {python_executable}", file=sys.stderr)
 
-  # Check GPU visibility
-  try:
-    gpu_res = subprocess.run(
-        ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"],
-        capture_output=True,
-        text=True,
-        timeout=3
-    )
-    if gpu_res.returncode == 0 and gpu_res.stdout.strip():
-      for line in gpu_res.stdout.strip().splitlines():
-        print(f"=== GPU:         {line.strip()}")
-  except Exception:
-    pass
+    # Check GPU visibility
+    try:
+      gpu_res = subprocess.run(
+          ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"],
+          capture_output=True,
+          text=True,
+          timeout=3
+      )
+      if gpu_res.returncode == 0 and gpu_res.stdout.strip():
+        for line in gpu_res.stdout.strip().splitlines():
+          print(f"=== GPU:         {line.strip()}", file=sys.stderr)
+    except Exception:
+      pass
 
-  print("=" * 80)
-  sys.stdout.flush()
+    print("=" * 80, file=sys.stderr)
+    sys.stderr.flush()
 
   child = None
   try:
@@ -263,15 +265,16 @@ def cmd_run(args):
 
   (job_dir / "exit_code").write_text(str(exit_code))
 
-  # Log job end footer
-  print("\n" + "=" * 80)
-  print(f"=== RUNPOD JOB COMPLETED: {args.job_id}")
-  print(f"=== End Time:    {ended_at_human}")
-  print(f"=== Duration:    {dur_str}")
-  print(f"=== Exit Code:   {exit_code}")
+  if verbose:
+    # Log job end footer
+    print("\n" + "=" * 80, file=sys.stderr)
+    print(f"=== RUNPOD JOB COMPLETED: {args.job_id}", file=sys.stderr)
+    print(f"=== End Time:    {ended_at_human}", file=sys.stderr)
+    print(f"=== Duration:    {dur_str}", file=sys.stderr)
+    print(f"=== Exit Code:   {exit_code}", file=sys.stderr)
 
   if exit_code in (137, -9):
-    print("=== NOTICE: Exit code 137 indicates process was killed via SIGKILL (often Linux OOM Killer).")
+    print("=== NOTICE: Exit code 137 indicates process was killed via SIGKILL (often Linux OOM Killer).", file=sys.stderr)
     try:
       dmesg_res = subprocess.run(
           ["dmesg", "-T"],
@@ -284,14 +287,15 @@ def cmd_run(args):
           if any(k in l.lower() for k in ("oom-killer", "out of memory", "killed process"))
       ]
       if oom_lines:
-        print("=== Kernel OOM Killer events detected in dmesg:")
+        print("=== Kernel OOM Killer events detected in dmesg:", file=sys.stderr)
         for l in oom_lines[-5:]:
-          print(f"    {l}")
+          print(f"    {l}", file=sys.stderr)
     except Exception:
       pass
 
-  print("=" * 80)
-  sys.stdout.flush()
+  if verbose:
+    print("=" * 80, file=sys.stderr)
+    sys.stderr.flush()
 
   status = "COMPLETED" if exit_code == 0 else f"FAILED({exit_code})"
   if (job_dir / "killed").exists():
@@ -547,6 +551,7 @@ def main():
   run_p.add_argument("--log-file", required=True)
   run_p.add_argument("--work-dir", default="")
   run_p.add_argument("--shell", action="store_true", default=False)
+  run_p.add_argument("-v", "--verbose", action="store_true", default=False)
 
   list_p = subparsers.add_parser("list")
   list_p.add_argument("--base-dir", default=None)

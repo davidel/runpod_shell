@@ -428,7 +428,8 @@ class TestRunPodShellCLI(unittest.TestCase):
         wait_for_setup_flag=True,
         ssh_timeout=180,
         ssh_config_path="/dev/null",
-        extra_env=None
+        extra_env=None,
+        verbose=False
     )
 
   @patch("runpod_shell.cli.find_ssh_private_key")
@@ -500,7 +501,8 @@ class TestRunPodShellCLI(unittest.TestCase):
         tail_lines=None,
         follow=True,
         private_key_path=None,
-        ssh_config_path="/dev/null"
+        ssh_config_path="/dev/null",
+        verbose=False
     )
 
   @patch("runpod_shell.cli.find_ssh_private_key")
@@ -533,7 +535,7 @@ class TestRunPodShellCLI(unittest.TestCase):
         port=12345,
         target_id="job-1",
         signal_name="SIGKILL",
-        timeout=15.0,
+        timeout=30.0,
         private_key_path=None,
         ssh_config_path="/dev/null"
     )
@@ -607,7 +609,8 @@ class TestRunPodShellCLI(unittest.TestCase):
         wait_for_setup_flag=True,
         ssh_timeout=180,
         ssh_config_path="/env/ssh/config",
-        extra_env=None
+        extra_env=None,
+        verbose=False
     )
 
   @patch("subprocess.run")
@@ -1090,7 +1093,8 @@ class TestRunPodShellCLI(unittest.TestCase):
             "DEBUG": "true",
             "LOCAL_VAR": "local_value",
             "OVERRIDE": "custom"
-        }
+        },
+        verbose=False
     )
 
   @patch("runpod_shell.cli.find_ssh_private_key")
@@ -1138,7 +1142,8 @@ class TestRunPodShellCLI(unittest.TestCase):
         wait_for_setup_flag=True,
         ssh_timeout=180,
         ssh_config_path=None,
-        extra_env=mock_env
+        extra_env=mock_env,
+        verbose=False
     )
 
   @patch("runpod_shell.cli.get_last_pod_id")
@@ -1185,7 +1190,8 @@ class TestRunPodShellCLI(unittest.TestCase):
         wait_for_setup_flag=True,
         ssh_timeout=180,
         ssh_config_path=None,
-        extra_env=mock_env
+        extra_env=mock_env,
+        verbose=False
     )
 
   @patch("runpod_shell.cli.find_ssh_private_key")
@@ -1228,7 +1234,8 @@ class TestRunPodShellCLI(unittest.TestCase):
         wait_for_setup_flag=True,
         ssh_timeout=180,
         ssh_config_path=None,
-        extra_env=mock_env
+        extra_env=mock_env,
+        verbose=False
     )
 
   @patch("runpod.stop_pod")
@@ -1299,7 +1306,7 @@ class TestRunPodShellCLI(unittest.TestCase):
         port=12345,
         target_id="job-99",
         signal_name="SIGTERM",
-        timeout=15.0,
+        timeout=30.0,
         private_key_path=None,
         ssh_config_path=None
     )
@@ -1328,7 +1335,8 @@ class TestRunPodShellCLI(unittest.TestCase):
         tail_lines=None,
         follow=False,
         private_key_path=None,
-        ssh_config_path=None
+        ssh_config_path=None,
+        verbose=False
     )
 
   def test_save_and_get_last_pod_id(self):
@@ -1447,7 +1455,8 @@ class TestRunPodShellCLI(unittest.TestCase):
         ssh_timeout=180,
         ssh_config_path=None,
         extra_env=None,
-        use_shell=False
+        use_shell=False,
+        verbose=False
     )
     mock_save_job.assert_called_once_with("job-run-1")
 
@@ -1488,7 +1497,8 @@ class TestRunPodShellCLI(unittest.TestCase):
         ssh_timeout=180,
         ssh_config_path=None,
         extra_env=None,
-        use_shell=False
+        use_shell=False,
+        verbose=False
     )
     mock_save_job.assert_called_once_with("job-run-2")
 
@@ -1543,7 +1553,8 @@ class TestRunPodShellCLI(unittest.TestCase):
         tail_lines=None,
         follow=False,
         private_key_path=None,
-        ssh_config_path=None
+        ssh_config_path=None,
+        verbose=False
     )
 
   @patch("runpod_shell.cli.get_last_job_id")
@@ -1572,7 +1583,8 @@ class TestRunPodShellCLI(unittest.TestCase):
         tail_lines=None,
         follow=False,
         private_key_path=None,
-        ssh_config_path=None
+        ssh_config_path=None,
+        verbose=False
     )
 
   @patch("runpod_shell.cli.clear_last_job_id_if_match")
@@ -1598,7 +1610,7 @@ class TestRunPodShellCLI(unittest.TestCase):
         port=12345,
         target_id="job-kill-1",
         signal_name="SIGTERM",
-        timeout=15.0,
+        timeout=30.0,
         private_key_path=None,
         ssh_config_path=None
     )
@@ -1629,7 +1641,7 @@ class TestRunPodShellCLI(unittest.TestCase):
         port=12345,
         target_id="job-last-killed",
         signal_name="SIGTERM",
-        timeout=15.0,
+        timeout=30.0,
         private_key_path=None,
         ssh_config_path=None
     )
@@ -1685,7 +1697,8 @@ class TestRunPodShellCLI(unittest.TestCase):
         ssh_timeout=180,
         ssh_config_path=None,
         extra_env=None,
-        use_shell=True
+        use_shell=True,
+        verbose=False
     )
 
   @patch("subprocess.run")
@@ -1798,6 +1811,124 @@ class TestRunPodShellCLI(unittest.TestCase):
     with patch.object(sys, "argv", test_args2):
       with self.assertRaises(RuntimeError):
         cli.main()
+
+  @patch("runpod_shell.cli.find_ssh_private_key")
+  @patch("runpod_shell.cli.execute_remote_script")
+  @patch("runpod.get_pod")
+  def test_exec_with_verbose_flag(self, mock_get_pod, mock_exec, mock_find_priv):
+    mock_find_priv.return_value = None
+    mock_get_pod.return_value = {
+        "id": "pod-123",
+        "runtime": {
+            "ports": [{"privatePort": 22, "isExternal": 12345, "address": "12.34.56.78"}]
+        }
+    }
+    mock_exec.return_value = {"job_id": "job-1", "pid": "123", "exit_code": 0}
+
+    test_args = [
+        "cli.py",
+        "--api-key", "fake-api-key",
+        "exec",
+        "-v",
+        "pod-123",
+        "script.sh"
+    ]
+
+    with patch("sys.stderr") as mock_stderr:
+      with patch.object(sys, "argv", test_args):
+        cli.main()
+
+      mock_exec.assert_called_once_with(
+          host="12.34.56.78",
+          port=12345,
+          script_path="script.sh",
+          script_args="",
+          detach=False,
+          private_key_path=None,
+          wait_for_setup_flag=True,
+          ssh_timeout=180,
+          ssh_config_path=None,
+          extra_env=None,
+          verbose=True
+      )
+      self.assertTrue(any("Fetching connection details" in str(c) for c in mock_stderr.method_calls))
+
+  @patch("runpod_shell.cli.save_last_job_id")
+  @patch("runpod_shell.cli.find_ssh_private_key")
+  @patch("runpod_shell.cli.execute_remote_command")
+  @patch("runpod.get_pod")
+  def test_run_with_verbose_flag(self, mock_get_pod, mock_exec_cmd, mock_find_priv, mock_save_job):
+    mock_find_priv.return_value = None
+    mock_get_pod.return_value = {
+        "id": "pod-123",
+        "runtime": {
+            "ports": [{"privatePort": 22, "isExternal": 12345, "address": "12.34.56.78"}]
+        }
+    }
+    mock_exec_cmd.return_value = {"job_id": "job-1", "pid": "123", "exit_code": 0}
+
+    test_args = [
+        "cli.py",
+        "--api-key", "fake-api-key",
+        "run",
+        "-v",
+        "-p", "pod-123",
+        "echo", "hi"
+    ]
+
+    with patch("sys.stderr") as mock_stderr:
+      with patch.object(sys, "argv", test_args):
+        cli.main()
+
+      mock_exec_cmd.assert_called_once_with(
+          host="12.34.56.78",
+          port=12345,
+          command_args=["echo", "hi"],
+          detach=False,
+          private_key_path=None,
+          wait_for_setup_flag=True,
+          ssh_timeout=180,
+          ssh_config_path=None,
+          extra_env=None,
+          use_shell=False,
+          verbose=True
+      )
+      self.assertTrue(any("Fetching connection details" in str(c) for c in mock_stderr.method_calls))
+
+  @patch("runpod_shell.cli.find_ssh_private_key")
+  @patch("runpod_shell.cli.view_remote_logs")
+  @patch("runpod.get_pod")
+  def test_logs_with_verbose_flag(self, mock_get_pod, mock_view_logs, mock_find_priv):
+    mock_find_priv.return_value = None
+    mock_get_pod.return_value = {
+        "id": "pod-123",
+        "runtime": {
+            "ports": [{"privatePort": 22, "isExternal": 12345, "address": "12.34.56.78"}]
+        }
+    }
+
+    test_args = [
+        "cli.py",
+        "--api-key", "fake-api-key",
+        "logs",
+        "-v",
+        "pod-123",
+        "job-1"
+    ]
+
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+
+    mock_view_logs.assert_called_once_with(
+        host="12.34.56.78",
+        port=12345,
+        job_id="job-1",
+        tail_lines=None,
+        follow=False,
+        private_key_path=None,
+        ssh_config_path=None,
+        verbose=True
+    )
 
 
 if __name__ == "__main__":
