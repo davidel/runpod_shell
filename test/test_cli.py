@@ -470,6 +470,39 @@ class TestRunPodShellCLI(unittest.TestCase):
     mock_list_jobs.assert_called_once_with("12.34.56.78", 12345, private_key_path=None, ssh_config_path="/dev/null")
 
   @patch("runpod_shell.cli.find_ssh_private_key")
+  @patch("runpod_shell.cli.list_remote_jobs")
+  @patch("runpod.get_pod")
+  @patch("builtins.print")
+  def test_ps_table_formatting_compact(self, mock_print, mock_get_pod, mock_list_jobs, mock_find_priv):
+    mock_find_priv.return_value = None
+    mock_get_pod.return_value = {
+        "id": "pod-123",
+        "runtime": {
+            "ports": [{"privatePort": 22, "isExternal": 12345, "address": "12.34.56.78"}]
+        }
+    }
+    mock_list_jobs.return_value = [
+        {
+            "job_id": "job-1",
+            "pid": 1234,
+            "status": "RUNNING",
+            "started_at_iso": "2026-09-04T12:00:00Z",
+            "duration": "5m 0s",
+            "script": "train.py",
+            "log_file": "/workspace/logs/job-1.log"
+        }
+    ]
+
+    test_args = ["cli.py", "--api-key", "fake-api-key", "ps", "pod-123"]
+    with patch.object(sys, "argv", test_args):
+      cli.main()
+
+    printed_lines = [call[0][0] for call in mock_print.call_args_list if call[0]]
+    header_line = next((l for l in printed_lines if "JOB ID" in l), None)
+    self.assertIsNotNone(header_line)
+    self.assertTrue(header_line.startswith("JOB ID   |"))
+
+  @patch("runpod_shell.cli.find_ssh_private_key")
   @patch("runpod_shell.cli.view_remote_logs")
   @patch("runpod.get_pod")
   def test_logs_command(self, mock_get_pod, mock_view_logs, mock_find_priv):

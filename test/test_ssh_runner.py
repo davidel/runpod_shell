@@ -108,12 +108,14 @@ class TestSSHRunner(unittest.TestCase):
         detach=True
     )
 
+    self.assertEqual(res["job_id"], "job-1")
     self.assertEqual(res["pid"], "12345")
     self.assertEqual(res["log_file"], "/workspace/logs/job.log")
     self.assertEqual(res["exit_code"], 0)
     launch_script = mock_run.call_args_list[2][0][0][-1]
     self.assertIn("python3 /tmp/.runpod_runner.py run", launch_script)
-    self.assertIn('--job-id "job-1', launch_script)
+    self.assertIn("next-id", launch_script)
+    self.assertIn('--job-id "$JOB_ID"', launch_script)
 
   @patch("pathlib.Path.exists", autospec=True)
   @patch("runpod_shell.ssh_runner.wait_for_ssh")
@@ -199,6 +201,18 @@ class TestSSHRunner(unittest.TestCase):
     # Should handle KeyboardInterrupt gracefully without raising
     ssh_runner.view_remote_logs("1.2.3.4", 22, job_id="job-1", follow=True)
     mock_run.assert_called_once()
+
+  @patch("runpod_shell.ssh_runner.list_remote_jobs")
+  @patch("subprocess.run")
+  def test_view_remote_logs_shorthand_id(self, mock_run, mock_list):
+    mock_list.return_value = [
+        {"job_id": "job-1", "log_file": "/workspace/logs/job-1.log"}
+    ]
+    ssh_runner.view_remote_logs("1.2.3.4", 22, job_id="1")
+    mock_run.assert_called_once()
+    called_cmd = mock_run.call_args[0][0]
+    remote_cmd = called_cmd[-1]
+    self.assertIn("cat '/workspace/logs/job-1.log'", remote_cmd)
 
   @patch("subprocess.run")
   def test_kill_remote_job(self, mock_run):

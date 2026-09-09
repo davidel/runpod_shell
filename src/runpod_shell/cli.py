@@ -939,8 +939,10 @@ def cmd_ps(args):
     print(f"No managed jobs found on pod '{target_pod_id}'.")
     return
 
-  print(f"{'JOB ID':<26} | {'PID':<8} | {'STATUS':<12} | {'STARTED':<20} | {'DURATION':<10} | {'SCRIPT':<18} | {'LOG FILE'}")
-  print("-" * 120)
+  jid_width = max(8, max((len(str(j.get("job_id", ""))) for j in jobs), default=8))
+  sep_width = max(100, jid_width + 85)
+  print(f"{'JOB ID':<{jid_width}} | {'PID':<8} | {'STATUS':<12} | {'STARTED':<20} | {'DURATION':<10} | {'SCRIPT':<18} | {'LOG FILE'}")
+  print("-" * sep_width)
   for j in jobs:
     jid = j.get("job_id", "N/A")
     pid = str(j.get("pid", "N/A"))
@@ -949,7 +951,7 @@ def cmd_ps(args):
     dur = j.get("duration", "N/A")
     script = j.get("script", "N/A")
     log_f = j.get("log_file", "N/A")
-    print(f"{jid:<26} | {pid:<8} | {status:<12} | {started:<20} | {dur:<10} | {script:<18} | {log_f}")
+    print(f"{jid:<{jid_width}} | {pid:<8} | {status:<12} | {started:<20} | {dur:<10} | {script:<18} | {log_f}")
 
 
 def cmd_logs(args):

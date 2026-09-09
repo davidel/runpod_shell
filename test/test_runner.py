@@ -7,6 +7,8 @@ import tempfile
 import time
 import unittest
 
+import runpod_shell.runner as runner
+
 
 RUNNER_PATH = Path(__file__).parent.parent / "src" / "runpod_shell" / "runner.py"
 
@@ -334,6 +336,112 @@ class TestRunnerScript(unittest.TestCase):
       self.assertIn("2", log_content)
       self.assertIn("=== RUNPOD JOB COMPLETED: test-shell-1", log_content)
       self.assertEqual((job_dir / "exit_code").read_text().strip(), "0")
+
+  def test_allocate_job_id_sequential(self):
+    with tempfile.TemporaryDirectory() as td:
+      tdp = Path(td)
+      id1 = runner.allocate_job_id(base_dir=tdp)
+      id2 = runner.allocate_job_id(base_dir=tdp)
+      id3 = runner.allocate_job_id(base_dir=tdp)
+      self.assertEqual(id1, "job-1")
+      self.assertEqual(id2, "job-2")
+      self.assertEqual(id3, "job-3")
+
+  def test_allocate_job_id_directory_fallback(self):
+    with tempfile.TemporaryDirectory() as td:
+      tdp = Path(td)
+      jobs_dir = tdp / ".runpod_jobs"
+      jobs_dir.mkdir(parents=True, exist_ok=True)
+      (jobs_dir / "job-1").mkdir()
+      (jobs_dir / "job-5").mkdir()
+      (jobs_dir / "job-12").mkdir()
+
+      next_id = runner.allocate_job_id(base_dir=tdp)
+      self.assertEqual(next_id, "job-13")
+
+  def test_allocate_job_id_concurrent(self):
+    with tempfile.TemporaryDirectory() as td:
+      tdp = Path(td)
+      src_dir = Path(__file__).parent.parent / "src"
+      worker_code = (
+          f"import sys\n"
+          f"sys.path.insert(0, '{src_dir}')\n"
+          f"import runpod_shell.runner as r\n"
+          f"print(r.allocate_job_id(base_dir='{tdp}'))\n"
+      )
+
+      procs = [
+          subprocess.Popen([sys.executable, "-c", worker_code], stdout=subprocess.PIPE, text=True)
+          for _ in range(10)
+      ]
+      results = [p.communicate()[0].strip() for p in procs]
+      for p in procs:
+        self.assertEqual(p.returncode, 0)
+
+      self.assertEqual(len(results), 10)
+      self.assertEqual(len(set(results)), 10)
+      expected = {f"job-{i}" for i in range(1, 11)}
+      self.assertEqual(set(results), expected)
+
+  def test_runner_next_id_cli(self):
+    with tempfile.TemporaryDirectory() as td:
+      tdp = Path(td)
+      res1 = subprocess.run([
+          sys.executable,
+          str(RUNNER_PATH),
+          "next-id",
+          "--base-dir", str(tdp)
+      ], capture_output=True, text=True)
+      self.assertEqual(res1.returncode, 0)
+      self.assertEqual(res1.stdout.strip(), "job-1")
+
+      res2 = subprocess.run([
+          sys.executable,
+          str(RUNNER_PATH),
+          "next-id",
+          "--base-dir", str(tdp)
+      ], capture_output=True, text=True)
+      self.assertEqual(res2.returncode, 0)
+      self.assertEqual(res2.stdout.strip(), "job-2")
+
+  def test_runner_run_auto_allocated_job_id(self):
+    with tempfile.TemporaryDirectory() as td:
+      tdp = Path(td)
+      jobs_dir = tdp / ".runpod_jobs"
+      jobs_dir.mkdir(parents=True, exist_ok=True)
+      log_file = tdp / "logs" / "auto.log"
+      log_file.parent.mkdir(parents=True, exist_ok=True)
+
+      res = subprocess.run([
+          sys.executable,
+          str(RUNNER_PATH),
+          "run",
+          "--cmd", "echo auto-job",
+          "--job-dir", str(jobs_dir / "job-1"),
+          "--log-file", str(log_file),
+          "--work-dir", str(tdp)
+      ], capture_output=True, text=True)
+      self.assertEqual(res.returncode, 0)
+      meta = json.loads((jobs_dir / "job-1" / "meta.json").read_text())
+      self.assertTrue(meta["job_id"].startswith("job-"))
+
+  def test_runner_kill_with_shorthand_id(self):
+    with tempfile.TemporaryDirectory() as td:
+      tdp = Path(td)
+      job_dir = tdp / ".runpod_jobs" / "job-7"
+      job_dir.mkdir(parents=True, exist_ok=True)
+      (job_dir / "meta.json").write_text(json.dumps({"job_id": "job-7", "pid": 999999}))
+      (job_dir / "pid").write_text("999999")
+
+      res = subprocess.run([
+          sys.executable,
+          str(RUNNER_PATH),
+          "kill",
+          "--target", "7",
+          "--base-dir", str(tdp / ".runpod_jobs")
+      ], capture_output=True, text=True)
+      self.assertEqual(res.returncode, 0)
+      self.assertEqual(res.stdout.strip(), "NOT_RUNNING")
 
 
 if __name__ == "__main__":

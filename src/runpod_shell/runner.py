@@ -9,6 +9,7 @@ events, and manage job lifecycles.
 import argparse
 import base64
 import datetime
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -28,6 +29,63 @@ def get_base_dir():
 
 def get_jobs_dirs():
   return [Path("/workspace/.runpod_jobs"), Path("/tmp/.runpod_jobs")]
+
+
+def allocate_job_id(prefix="job-", base_dir=None):
+  if base_dir is None:
+    target_base = get_base_dir()
+  else:
+    target_base = Path(base_dir)
+
+  jobs_dir = target_base / ".runpod_jobs" if target_base.name != ".runpod_jobs" else target_base
+  jobs_dir.mkdir(parents=True, exist_ok=True)
+  lock_file_path = jobs_dir / ".counter.lock"
+  counter_file_path = jobs_dir / ".counter"
+
+  with open(lock_file_path, "w") as lock_file:
+    fcntl.flock(lock_file, fcntl.LOCK_EX)
+    try:
+      current_id = 0
+      if counter_file_path.exists():
+        try:
+          current_id = int(counter_file_path.read_text().strip())
+        except (ValueError, OSError):
+          current_id = 0
+
+      if current_id == 0:
+        max_existing = 0
+        search_dirs = [jobs_dir] if base_dir else get_jobs_dirs()
+        for b_dir in search_dirs:
+          if b_dir.exists():
+            try:
+              for entry in b_dir.iterdir():
+                if entry.is_dir():
+                  name = entry.name
+                  if name.startswith(prefix):
+                    num_part = name[len(prefix):]
+                    if num_part.isdigit():
+                      max_existing = max(max_existing, int(num_part))
+                  elif name.isdigit():
+                    max_existing = max(max_existing, int(name))
+            except OSError:
+              pass
+        current_id = max(current_id, max_existing)
+
+      next_id = current_id + 1
+      counter_file_path.write_text(str(next_id))
+      return f"{prefix}{next_id}"
+    finally:
+      try:
+        fcntl.flock(lock_file, fcntl.LOCK_UN)
+      except OSError:
+        pass
+
+
+def cmd_next_id(args):
+  prefix = getattr(args, "prefix", "job-") or "job-"
+  base_dir = getattr(args, "base_dir", None)
+  jid = allocate_job_id(prefix=prefix, base_dir=base_dir)
+  print(jid)
 
 
 def format_duration(seconds):
@@ -87,9 +145,23 @@ def is_pgid_alive(pgid):
 
 
 def cmd_run(args):
-  job_dir = Path(args.job_dir)
+  job_id = getattr(args, "job_id", None)
+  if not job_id:
+    job_id = allocate_job_id()
+
+  base_dir = get_base_dir()
+  if getattr(args, "job_dir", None):
+    job_dir = Path(args.job_dir)
+  else:
+    job_dir = base_dir / ".runpod_jobs" / job_id
   job_dir.mkdir(parents=True, exist_ok=True)
-  log_file = Path(args.log_file)
+
+  if getattr(args, "log_file", None):
+    log_file = Path(args.log_file)
+  else:
+    logs_dir = base_dir / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    log_file = logs_dir / f"{job_id}.log"
   log_file.parent.mkdir(parents=True, exist_ok=True)
 
   started_at = int(time.time())
@@ -129,7 +201,7 @@ def cmd_run(args):
       sys.stderr.flush()
       (job_dir / "exit_code").write_text("127")
       meta = {
-          "job_id": args.job_id,
+          "job_id": job_id,
           "pid": pid,
           "script": script_name,
           "args": args.args or "",
@@ -165,7 +237,7 @@ def cmd_run(args):
     sys.exit(1)
 
   meta = {
-      "job_id": args.job_id,
+      "job_id": job_id,
       "pid": pid,
       "script": script_name,
       "args": args.args or "",
@@ -195,7 +267,7 @@ def cmd_run(args):
   if verbose:
     # Log job start header
     print("=" * 80, file=sys.stderr)
-    print(f"=== RUNPOD JOB STARTED: {args.job_id}", file=sys.stderr)
+    print(f"=== RUNPOD JOB STARTED: {job_id}", file=sys.stderr)
     print(f"=== Start Time:  {started_at_human}", file=sys.stderr)
     cmd_display = script_path_str if getattr(args, "cmd", None) else f"{args.script} {args.args or ''}".strip()
     print(f"=== Command:     {cmd_display}", file=sys.stderr)
@@ -268,7 +340,7 @@ def cmd_run(args):
   if verbose:
     # Log job end footer
     print("\n" + "=" * 80, file=sys.stderr)
-    print(f"=== RUNPOD JOB COMPLETED: {args.job_id}", file=sys.stderr)
+    print(f"=== RUNPOD JOB COMPLETED: {job_id}", file=sys.stderr)
     print(f"=== End Time:    {ended_at_human}", file=sys.stderr)
     print(f"=== Duration:    {dur_str}", file=sys.stderr)
     print(f"=== Exit Code:   {exit_code}", file=sys.stderr)
@@ -410,7 +482,7 @@ def cmd_kill(args):
     if not base_dir.exists():
       continue
     for entry in base_dir.iterdir():
-      if entry.name == target_id:
+      if entry.name in (target_id, f"job-{target_id}"):
         target_job_dir = entry
         pid_file = entry / "pid"
         if pid_file.exists():
@@ -423,7 +495,7 @@ def cmd_kill(args):
       if meta_file.exists():
         try:
           data = json.loads(meta_file.read_text())
-          if str(data.get("pid")) == target_id or data.get("job_id") == target_id or str(data.get("child_pid")) == target_id:
+          if str(data.get("pid")) == target_id or data.get("job_id") in (target_id, f"job-{target_id}") or str(data.get("child_pid")) == target_id:
             target_job_dir = entry
             target_pid = str(data.get("pid"))
             if "child_pid" in data:
@@ -543,15 +615,19 @@ def main():
   subparsers = parser.add_subparsers(dest="command", required=True)
 
   run_p = subparsers.add_parser("run")
-  run_p.add_argument("--job-id", required=True)
+  run_p.add_argument("--job-id", default=None)
   run_p.add_argument("--script", default=None)
   run_p.add_argument("--cmd", default=None)
   run_p.add_argument("--args", default="")
-  run_p.add_argument("--job-dir", required=True)
-  run_p.add_argument("--log-file", required=True)
+  run_p.add_argument("--job-dir", default=None)
+  run_p.add_argument("--log-file", default=None)
   run_p.add_argument("--work-dir", default="")
   run_p.add_argument("--shell", action="store_true", default=False)
   run_p.add_argument("-v", "--verbose", action="store_true", default=False)
+
+  next_id_p = subparsers.add_parser("next-id", help="Allocate the next sequential job ID")
+  next_id_p.add_argument("--prefix", default="job-")
+  next_id_p.add_argument("--base-dir", default=None)
 
   list_p = subparsers.add_parser("list")
   list_p.add_argument("--base-dir", default=None)
@@ -569,6 +645,8 @@ def main():
     cmd_list(args)
   elif args.command == "kill":
     cmd_kill(args)
+  elif args.command == "next-id":
+    cmd_next_id(args)
 
 
 if __name__ == "__main__":

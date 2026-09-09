@@ -211,8 +211,8 @@ def execute_remote_script(
 
   ensure_remote_runner(host, port, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
 
-  job_id = f"job-{int(time.time())}-{uuid.uuid4().hex[:6]}"
-  remote_script_path = f"/tmp/{job_id}_{local_path.name}"
+  upload_prefix = f"upload_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+  remote_script_path = f"/tmp/{upload_prefix}_{local_path.name}"
 
   if verbose:
     print(f"Uploading script '{local_path.name}' to remote pod...", file=sys.stderr)
@@ -235,13 +235,14 @@ BASE_DIR="/workspace"
 if [ ! -d "/workspace" ]; then
   BASE_DIR="/tmp"
 fi
-JOBS_DIR="$BASE_DIR/.runpod_jobs/{job_id}"
+JOB_ID=$(python3 {REMOTE_RUNNER_PATH} next-id)
+JOBS_DIR="$BASE_DIR/.runpod_jobs/$JOB_ID"
 LOGS_DIR="$BASE_DIR/logs"
 mkdir -p "$JOBS_DIR" "$LOGS_DIR"
-LOG_FILE="$LOGS_DIR/{job_id}_{local_path.name}.log"
+LOG_FILE="$LOGS_DIR/${{JOB_ID}}_{local_path.name}.log"
 
 setsid nohup python3 {REMOTE_RUNNER_PATH} run \\
-  --job-id "{job_id}" \\
+  --job-id "$JOB_ID" \\
   --script "{remote_script_path}" \\
   --args {shlex.quote(script_args)} \\
   {verbose_flag}--job-dir "$JOBS_DIR" \\
@@ -251,7 +252,7 @@ setsid nohup python3 {REMOTE_RUNNER_PATH} run \\
 PID=$!
 echo "PID:$PID"
 echo "LOG_FILE:$LOG_FILE"
-echo "JOB_ID:{job_id}"
+echo "JOB_ID:$JOB_ID"
 """
 
   launch_cmd = build_ssh_cmd(host, port, launcher_script, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
@@ -261,11 +262,17 @@ echo "JOB_ID:{job_id}"
 
   pid = None
   log_file = None
+  job_id = None
   for line in launch_res.stdout.splitlines():
     if line.startswith("PID:"):
       pid = line.split("PID:", 1)[1].strip()
     elif line.startswith("LOG_FILE:"):
       log_file = line.split("LOG_FILE:", 1)[1].strip()
+    elif line.startswith("JOB_ID:"):
+      job_id = line.split("JOB_ID:", 1)[1].strip()
+
+  if not job_id:
+    job_id = "unknown"
 
   if verbose:
     print(f"\nRemote job registered:", file=sys.stderr)
@@ -360,8 +367,6 @@ def execute_remote_command(
 
   ensure_remote_runner(host, port, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
 
-  job_id = f"job-{int(time.time())}-{uuid.uuid4().hex[:6]}"
-
   env_payload_line = ""
   if extra_env:
     env_json = json.dumps(extra_env)
@@ -376,13 +381,14 @@ def execute_remote_command(
 if [ ! -d "/workspace" ]; then
   BASE_DIR="/tmp"
 fi
-JOBS_DIR="$BASE_DIR/.runpod_jobs/{job_id}"
+JOB_ID=$(python3 {REMOTE_RUNNER_PATH} next-id)
+JOBS_DIR="$BASE_DIR/.runpod_jobs/$JOB_ID"
 LOGS_DIR="$BASE_DIR/logs"
 mkdir -p "$JOBS_DIR" "$LOGS_DIR"
-LOG_FILE="$LOGS_DIR/{job_id}_{binary_name}.log"
+LOG_FILE="$LOGS_DIR/${{JOB_ID}}_{binary_name}.log"
 
 setsid nohup python3 {REMOTE_RUNNER_PATH} run \\
-  --job-id "{job_id}" \\
+  --job-id "$JOB_ID" \\
   {shell_flag}{verbose_flag}--cmd {shlex.quote(cmd_str)} \\
   --job-dir "$JOBS_DIR" \\
   --log-file "$LOG_FILE" \\
@@ -391,7 +397,7 @@ setsid nohup python3 {REMOTE_RUNNER_PATH} run \\
 PID=$!
 echo "PID:$PID"
 echo "LOG_FILE:$LOG_FILE"
-echo "JOB_ID:{job_id}"
+echo "JOB_ID:$JOB_ID"
 """
 
   launch_cmd = build_ssh_cmd(host, port, launcher_script, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
@@ -401,11 +407,17 @@ echo "JOB_ID:{job_id}"
 
   pid = None
   log_file = None
+  job_id = None
   for line in launch_res.stdout.splitlines():
     if line.startswith("PID:"):
       pid = line.split("PID:", 1)[1].strip()
     elif line.startswith("LOG_FILE:"):
       log_file = line.split("LOG_FILE:", 1)[1].strip()
+    elif line.startswith("JOB_ID:"):
+      job_id = line.split("JOB_ID:", 1)[1].strip()
+
+  if not job_id:
+    job_id = "unknown"
 
   if verbose:
     print(f"\nRemote job registered:", file=sys.stderr)
@@ -484,7 +496,7 @@ def view_remote_logs(host, port, job_id=None, tail_lines=None, follow=False, pri
 
   if job_id:
     for j in jobs:
-      if j.get("job_id") == job_id or str(j.get("pid")) == str(job_id):
+      if j.get("job_id") in (str(job_id), f"job-{job_id}") or str(j.get("pid")) == str(job_id):
         target_job = j
         break
     if not target_job:
