@@ -221,41 +221,22 @@ def execute_remote_script(
   if upload_res.returncode != 0:
     raise RuntimeError(f"Failed to upload script via SCP: {upload_res.stderr.strip()}")
 
-  env_payload_line = ""
+  spawn_cmd_parts = [
+      f"python3 {REMOTE_RUNNER_PATH} spawn",
+      f"--script {shlex.quote(str(remote_script_path))}"
+  ]
+  if script_args:
+    spawn_cmd_parts.append(f"--args {shlex.quote(str(script_args))}")
+  if verbose:
+    spawn_cmd_parts.append("--verbose")
+
+  remote_spawn_cmd = " ".join(spawn_cmd_parts)
   if extra_env:
     env_json = json.dumps(extra_env)
     env_b64 = base64.b64encode(env_json.encode("utf-8")).decode("ascii")
-    env_payload_line = f'export RUNPOD_JOB_ENV="{env_b64}"\n'
+    remote_spawn_cmd = f'export RUNPOD_JOB_ENV="{env_b64}"\n{remote_spawn_cmd}'
 
-  verbose_flag = "--verbose \\\n  " if verbose else ""
-
-  # Launcher command on remote host
-  launcher_script = f"""{env_payload_line}chmod +x "{remote_script_path}"
-BASE_DIR="/workspace"
-if [ ! -d "/workspace" ]; then
-  BASE_DIR="/tmp"
-fi
-JOB_ID=$(python3 {REMOTE_RUNNER_PATH} next-id)
-JOBS_DIR="$BASE_DIR/.runpod_jobs/$JOB_ID"
-LOGS_DIR="$BASE_DIR/logs"
-mkdir -p "$JOBS_DIR" "$LOGS_DIR"
-LOG_FILE="$LOGS_DIR/${{JOB_ID}}_{local_path.name}.log"
-
-setsid nohup python3 {REMOTE_RUNNER_PATH} run \\
-  --job-id "$JOB_ID" \\
-  --script "{remote_script_path}" \\
-  --args {shlex.quote(script_args)} \\
-  {verbose_flag}--job-dir "$JOBS_DIR" \\
-  --log-file "$LOG_FILE" \\
-  --work-dir "$BASE_DIR" > "$LOG_FILE" 2>&1 &
-
-PID=$!
-echo "PID:$PID"
-echo "LOG_FILE:$LOG_FILE"
-echo "JOB_ID:$JOB_ID"
-"""
-
-  launch_cmd = build_ssh_cmd(host, port, launcher_script, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
+  launch_cmd = build_ssh_cmd(host, port, remote_spawn_cmd, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
   launch_res = subprocess.run(launch_cmd, capture_output=True, text=True)
   if launch_res.returncode != 0:
     raise RuntimeError(f"Failed to launch script on pod: {launch_res.stderr.strip()}")
@@ -367,40 +348,23 @@ def execute_remote_command(
 
   ensure_remote_runner(host, port, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
 
-  env_payload_line = ""
+  spawn_cmd_parts = [
+      f"python3 {REMOTE_RUNNER_PATH} spawn",
+      f"--cmd {shlex.quote(str(cmd_str))}",
+      f"--name {shlex.quote(str(binary_name))}"
+  ]
+  if use_shell:
+    spawn_cmd_parts.append("--shell")
+  if verbose:
+    spawn_cmd_parts.append("--verbose")
+
+  remote_spawn_cmd = " ".join(spawn_cmd_parts)
   if extra_env:
     env_json = json.dumps(extra_env)
     env_b64 = base64.b64encode(env_json.encode("utf-8")).decode("ascii")
-    env_payload_line = f'export RUNPOD_JOB_ENV="{env_b64}"\n'
+    remote_spawn_cmd = f'export RUNPOD_JOB_ENV="{env_b64}"\n{remote_spawn_cmd}'
 
-  shell_flag = "--shell \\\n  " if use_shell else ""
-  verbose_flag = "--verbose \\\n  " if verbose else ""
-
-  # Launcher command on remote host
-  launcher_script = f"""{env_payload_line}BASE_DIR="/workspace"
-if [ ! -d "/workspace" ]; then
-  BASE_DIR="/tmp"
-fi
-JOB_ID=$(python3 {REMOTE_RUNNER_PATH} next-id)
-JOBS_DIR="$BASE_DIR/.runpod_jobs/$JOB_ID"
-LOGS_DIR="$BASE_DIR/logs"
-mkdir -p "$JOBS_DIR" "$LOGS_DIR"
-LOG_FILE="$LOGS_DIR/${{JOB_ID}}_{binary_name}.log"
-
-setsid nohup python3 {REMOTE_RUNNER_PATH} run \\
-  --job-id "$JOB_ID" \\
-  {shell_flag}{verbose_flag}--cmd {shlex.quote(cmd_str)} \\
-  --job-dir "$JOBS_DIR" \\
-  --log-file "$LOG_FILE" \\
-  --work-dir "$BASE_DIR" > "$LOG_FILE" 2>&1 &
-
-PID=$!
-echo "PID:$PID"
-echo "LOG_FILE:$LOG_FILE"
-echo "JOB_ID:$JOB_ID"
-"""
-
-  launch_cmd = build_ssh_cmd(host, port, launcher_script, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
+  launch_cmd = build_ssh_cmd(host, port, remote_spawn_cmd, private_key_path=private_key_path, ssh_config_path=ssh_config_path)
   launch_res = subprocess.run(launch_cmd, capture_output=True, text=True)
   if launch_res.returncode != 0:
     raise RuntimeError(f"Failed to launch command on pod: {launch_res.stderr.strip()}")

@@ -443,6 +443,38 @@ class TestRunnerScript(unittest.TestCase):
       self.assertEqual(res.returncode, 0)
       self.assertEqual(res.stdout.strip(), "NOT_RUNNING")
 
+  def test_runner_spawn_cmd(self):
+    with tempfile.TemporaryDirectory() as td:
+      tdp = Path(td)
+      res = subprocess.run([
+          sys.executable,
+          str(RUNNER_PATH),
+          "spawn",
+          "--cmd", "echo spawn-success",
+          "--work-dir", str(tdp)
+      ], capture_output=True, text=True)
+
+      self.assertEqual(res.returncode, 0)
+      output = res.stdout
+      self.assertIn("PID:", output)
+      self.assertIn("LOG_FILE:", output)
+      self.assertIn("JOB_ID:job-", output)
+
+      log_file_line = [l for l in output.splitlines() if l.startswith("LOG_FILE:")][0]
+      log_file = Path(log_file_line.split("LOG_FILE:", 1)[1].strip())
+
+      for _ in range(50):
+        if log_file.exists() and "spawn-success" in log_file.read_text():
+          break
+        time.sleep(0.1)
+      self.assertTrue(log_file.exists())
+      self.assertIn("spawn-success", log_file.read_text())
+      # Clean up log file
+      try:
+        log_file.unlink()
+      except OSError:
+        pass
+
 
 if __name__ == "__main__":
   unittest.main()

@@ -113,9 +113,9 @@ class TestSSHRunner(unittest.TestCase):
     self.assertEqual(res["log_file"], "/workspace/logs/job.log")
     self.assertEqual(res["exit_code"], 0)
     launch_script = mock_run.call_args_list[2][0][0][-1]
-    self.assertIn("python3 /tmp/.runpod_runner.py run", launch_script)
-    self.assertIn("next-id", launch_script)
-    self.assertIn('--job-id "$JOB_ID"', launch_script)
+    self.assertIn("python3 /tmp/.runpod_runner.py spawn", launch_script)
+    self.assertIn("--script", launch_script)
+    self.assertIn("--args", launch_script)
 
   @patch("pathlib.Path.exists", autospec=True)
   @patch("runpod_shell.ssh_runner.wait_for_ssh")

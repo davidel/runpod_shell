@@ -13,6 +13,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import signal
@@ -254,6 +255,7 @@ def cmd_run(args):
   # Prepare environment
   env = os.environ.copy()
   env["PIP_BREAK_SYSTEM_PACKAGES"] = "1"
+  env["PYTHONUNBUFFERED"] = "1"
   job_env_b64 = env.pop("RUNPOD_JOB_ENV", None)
   if job_env_b64:
     try:
@@ -381,17 +383,90 @@ def cmd_run(args):
   meta["duration_seconds"] = dur_secs
   meta_file.write_text(json.dumps(meta, indent=2))
 
-  try:
-    log_escaped = shlex.quote(str(log_file))
-    subprocess.run(
-        f"pkill -f 'tail .* {log_escaped}'",
-        shell=True,
-        capture_output=True
-    )
-  except Exception:
-    pass
-
   sys.exit(exit_code)
+
+
+def cmd_spawn(args):
+  job_id = getattr(args, "job_id", None)
+  if not job_id:
+    job_id = allocate_job_id()
+
+  base_dir = get_base_dir()
+  if getattr(args, "job_dir", None):
+    job_dir = Path(args.job_dir)
+  else:
+    job_dir = base_dir / ".runpod_jobs" / job_id
+  job_dir.mkdir(parents=True, exist_ok=True)
+
+  name = getattr(args, "name", None)
+  if not name:
+    if getattr(args, "script", None):
+      name = Path(args.script).name
+    elif getattr(args, "cmd", None):
+      if getattr(args, "shell", False):
+        name = "shell"
+      else:
+        tokens = shlex.split(args.cmd)
+        name = Path(tokens[0]).name if tokens else "cmd"
+    else:
+      name = "job"
+  name = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', name) or "job"
+
+  if getattr(args, "log_file", None):
+    log_file = Path(args.log_file)
+  else:
+    logs_dir = base_dir / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    log_file = logs_dir / f"{job_id}_{name}.log"
+  log_file.parent.mkdir(parents=True, exist_ok=True)
+
+  runner_script = str(Path(__file__).resolve())
+  run_cmd = [
+      sys.executable,
+      runner_script,
+      "run",
+      "--job-id", str(job_id),
+      "--job-dir", str(job_dir),
+      "--log-file", str(log_file)
+  ]
+  if getattr(args, "script", None):
+    run_cmd.extend(["--script", str(args.script)])
+  if getattr(args, "cmd", None):
+    run_cmd.extend(["--cmd", str(args.cmd)])
+  if getattr(args, "args", None):
+    run_cmd.extend(["--args", str(args.args)])
+  if getattr(args, "work_dir", None):
+    run_cmd.extend(["--work-dir", str(args.work_dir)])
+  if getattr(args, "shell", False):
+    run_cmd.append("--shell")
+  if getattr(args, "verbose", False):
+    run_cmd.append("--verbose")
+
+  env = os.environ.copy()
+  env["PIP_BREAK_SYSTEM_PACKAGES"] = "1"
+  env["PYTHONUNBUFFERED"] = "1"
+
+  log_fd = open(log_file, "a")
+  try:
+    proc = subprocess.Popen(
+        run_cmd,
+        stdin=subprocess.DEVNULL,
+        stdout=log_fd,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+        close_fds=True,
+        env=env
+    )
+  finally:
+    log_fd.close()
+
+  (job_dir / "pid").write_text(str(proc.pid))
+
+  print(f"PID:{proc.pid}")
+  print(f"LOG_FILE:{log_file}")
+  print(f"JOB_ID:{job_id}")
+  sys.stdout.flush()
+  sys.exit(0)
 
 
 def cmd_list(args):
@@ -638,9 +713,23 @@ def main():
   kill_p.add_argument("--timeout", type=float, default=15.0)
   kill_p.add_argument("--base-dir", default=None)
 
+  spawn_p = subparsers.add_parser("spawn", help="Spawn a detached job daemon in a new session")
+  spawn_p.add_argument("--job-id", default=None)
+  spawn_p.add_argument("--script", default=None)
+  spawn_p.add_argument("--cmd", default=None)
+  spawn_p.add_argument("--args", default="")
+  spawn_p.add_argument("--name", default=None)
+  spawn_p.add_argument("--job-dir", default=None)
+  spawn_p.add_argument("--log-file", default=None)
+  spawn_p.add_argument("--work-dir", default="")
+  spawn_p.add_argument("--shell", action="store_true", default=False)
+  spawn_p.add_argument("-v", "--verbose", action="store_true", default=False)
+
   args = parser.parse_args()
   if args.command == "run":
     cmd_run(args)
+  elif args.command == "spawn":
+    cmd_spawn(args)
   elif args.command == "list":
     cmd_list(args)
   elif args.command == "kill":
