@@ -475,6 +475,38 @@ class TestRunnerScript(unittest.TestCase):
       except OSError:
         pass
 
+  def test_runner_spawn_script_strips_upload_prefix(self):
+    with tempfile.TemporaryDirectory() as td:
+      tdp = Path(td)
+      script_file = tdp / "upload_1789019711_939366_finetune_uvito.sh"
+      script_file.write_text("#!/bin/bash\necho finished\n")
+      script_file.chmod(0o755)
+
+      res = subprocess.run([
+          sys.executable,
+          str(RUNNER_PATH),
+          "spawn",
+          "--script", str(script_file),
+          "--work-dir", str(tdp),
+          "--base-dir", str(tdp)
+      ], capture_output=True, text=True)
+
+      self.assertEqual(res.returncode, 0)
+      output = res.stdout
+      log_file_line = [l for l in output.splitlines() if l.startswith("LOG_FILE:")][0]
+      log_file = Path(log_file_line.split("LOG_FILE:", 1)[1].strip())
+      self.assertEqual(log_file.name, "job-1_finetune_uvito.sh.log")
+
+      for _ in range(50):
+        if log_file.exists() and "finished" in log_file.read_text():
+          break
+        time.sleep(0.1)
+      self.assertTrue(log_file.exists())
+      try:
+        log_file.unlink()
+      except OSError:
+        pass
+
 
 if __name__ == "__main__":
   unittest.main()

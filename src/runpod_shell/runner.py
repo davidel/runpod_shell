@@ -195,7 +195,7 @@ def cmd_run(args):
       script_path_str = " ".join(shlex.quote(c) for c in cmd)
   elif getattr(args, "script", None):
     script_path = Path(args.script)
-    script_name = script_path.name
+    script_name = getattr(args, "name", None) or re.sub(r"^upload_\d+_[a-f0-9]+_", "", script_path.name)
     script_path_str = args.script
     if not script_path.exists():
       print(f"ERROR: Script not found at {script_path}", file=sys.stderr)
@@ -387,11 +387,11 @@ def cmd_run(args):
 
 
 def cmd_spawn(args):
+  base_dir = Path(args.base_dir) if getattr(args, "base_dir", None) else get_base_dir()
   job_id = getattr(args, "job_id", None)
   if not job_id:
-    job_id = allocate_job_id()
+    job_id = allocate_job_id(base_dir=base_dir)
 
-  base_dir = get_base_dir()
   if getattr(args, "job_dir", None):
     job_dir = Path(args.job_dir)
   else:
@@ -401,7 +401,8 @@ def cmd_spawn(args):
   name = getattr(args, "name", None)
   if not name:
     if getattr(args, "script", None):
-      name = Path(args.script).name
+      script_base = Path(args.script).name
+      name = re.sub(r"^upload_\d+_[a-f0-9]+_", "", script_base)
     elif getattr(args, "cmd", None):
       if getattr(args, "shell", False):
         name = "shell"
@@ -431,6 +432,8 @@ def cmd_spawn(args):
   ]
   if getattr(args, "script", None):
     run_cmd.extend(["--script", str(args.script)])
+  if name:
+    run_cmd.extend(["--name", str(name)])
   if getattr(args, "cmd", None):
     run_cmd.extend(["--cmd", str(args.cmd)])
   if getattr(args, "args", None):
@@ -698,6 +701,7 @@ def main():
   run_p.add_argument("--log-file", default=None)
   run_p.add_argument("--work-dir", default="")
   run_p.add_argument("--shell", action="store_true", default=False)
+  run_p.add_argument("--name", default=None)
   run_p.add_argument("-v", "--verbose", action="store_true", default=False)
 
   next_id_p = subparsers.add_parser("next-id", help="Allocate the next sequential job ID")
@@ -722,6 +726,7 @@ def main():
   spawn_p.add_argument("--job-dir", default=None)
   spawn_p.add_argument("--log-file", default=None)
   spawn_p.add_argument("--work-dir", default="")
+  spawn_p.add_argument("--base-dir", default=None)
   spawn_p.add_argument("--shell", action="store_true", default=False)
   spawn_p.add_argument("-v", "--verbose", action="store_true", default=False)
 

@@ -115,6 +115,7 @@ class TestSSHRunner(unittest.TestCase):
     launch_script = mock_run.call_args_list[2][0][0][-1]
     self.assertIn("python3 /tmp/.runpod_runner.py spawn", launch_script)
     self.assertIn("--script", launch_script)
+    self.assertIn("--name train.py", launch_script)
     self.assertIn("--args", launch_script)
 
   @patch("pathlib.Path.exists", autospec=True)

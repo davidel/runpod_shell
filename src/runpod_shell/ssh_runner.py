@@ -221,9 +221,11 @@ def execute_remote_script(
   if upload_res.returncode != 0:
     raise RuntimeError(f"Failed to upload script via SCP: {upload_res.stderr.strip()}")
 
+  script_name = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', local_path.name) or "job"
   spawn_cmd_parts = [
       f"python3 {REMOTE_RUNNER_PATH} spawn",
-      f"--script {shlex.quote(str(remote_script_path))}"
+      f"--script {shlex.quote(str(remote_script_path))}",
+      f"--name {shlex.quote(str(script_name))}"
   ]
   if script_args:
     spawn_cmd_parts.append(f"--args {shlex.quote(str(script_args))}")
