@@ -1110,6 +1110,249 @@ def cmd_list(args):
     print(f"{pod_id:<20} | {name:<25} | {status:<12} | {gpu_display:<22} | {ssh_endpoint}")
 
 
+def run_graphql(query):
+  from runpod.api.graphql import run_graphql_query
+  return run_graphql_query(query)
+
+
+def format_uptime(seconds):
+  if seconds is None or seconds < 0:
+    return "N/A"
+  seconds = int(seconds)
+  days = seconds // 86400
+  hours = (seconds % 86400) // 3600
+  minutes = (seconds % 3600) // 60
+  secs = seconds % 60
+  parts = []
+  if days > 0:
+    parts.append(f"{days}d")
+  if hours > 0 or days > 0:
+    parts.append(f"{hours}h")
+  if minutes > 0 or hours > 0 or days > 0:
+    parts.append(f"{minutes}m")
+  parts.append(f"{secs}s")
+  return " ".join(parts)
+
+
+def get_gpu_vram_map():
+  try:
+    gpus = runpod.get_gpus()
+    vram_map = {}
+    for g in gpus:
+      mem = g.get("memoryInGb")
+      if mem is not None:
+        if g.get("id"):
+          vram_map[g["id"].lower()] = mem
+        if g.get("displayName"):
+          vram_map[g["displayName"].lower()] = mem
+    return vram_map
+  except Exception:
+    return {}
+
+
+def get_detailed_pod(pod_id):
+  query = f"""
+  query PodDetails {{
+    pod(input: {{podId: "{pod_id}"}}) {{
+      id
+      name
+      desiredStatus
+      lastStatusChange
+      createdAt
+      uptimeSeconds
+      costPerHr
+      podType
+      imageName
+      dockerArgs
+      dockerId
+      env
+      vcpuCount
+      memoryInGb
+      containerDiskInGb
+      volumeInGb
+      volumeMountPath
+      gpuCount
+      machineId
+      ports
+      runtime {{
+        uptimeInSeconds
+        ports {{
+          ip
+          isIpPublic
+          privatePort
+          publicPort
+          type
+        }}
+        container {{
+          cpuPercent
+          memoryPercent
+        }}
+        gpus {{
+          id
+          gpuUtilPercent
+          memoryUtilPercent
+        }}
+      }}
+      machine {{
+        gpuDisplayName
+        gpuTypeId
+        podHostId
+        location
+        dataCenterId
+      }}
+    }}
+  }}
+  """
+  try:
+    res = run_graphql(query)
+    pod = res.get("data", {}).get("pod")
+    if pod:
+      return pod
+  except Exception:
+    pass
+
+  try:
+    return runpod.get_pod(pod_id)
+  except Exception as e:
+    fatal(f"Failed to fetch pod info: {e}", exc=e.__class__)
+
+
+def cmd_info(args):
+  target_pod_id = resolve_pod_id(args)
+  pod_info = get_detailed_pod(target_pod_id)
+
+  if not pod_info:
+    fatal(f"Pod '{target_pod_id}' not found.", FileNotFoundError)
+
+  save_last_pod_id(target_pod_id)
+
+  if getattr(args, "json_output", False):
+    import json
+    print(json.dumps(pod_info, indent=2))
+    return
+
+  name = pod_info.get("name") or "N/A"
+  status = pod_info.get("desiredStatus") or pod_info.get("status") or "N/A"
+  pod_type = pod_info.get("podType") or "N/A"
+  cost = pod_info.get("costPerHr")
+  cost_str = f"${cost:.2f} / hr" if isinstance(cost, (int, float)) else "N/A"
+
+  runtime = pod_info.get("runtime") or {}
+  uptime_sec = runtime.get("uptimeInSeconds")
+  if uptime_sec is None or uptime_sec == 0:
+    uptime_sec = pod_info.get("uptimeSeconds")
+  uptime_str = format_uptime(uptime_sec)
+
+  created_at = pod_info.get("createdAt") or pod_info.get("lastStatusChange") or ""
+  if created_at and "T" in created_at:
+    created_display = created_at.replace("T", " ").split(".")[0] + " UTC"
+  else:
+    created_display = created_at
+
+  machine = pod_info.get("machine") or {}
+  location = machine.get("location")
+  datacenter = machine.get("dataCenterId")
+  loc_str = datacenter if datacenter else (location if location else "N/A")
+  if datacenter and location and datacenter != location:
+    loc_str = f"{datacenter} ({location})"
+
+  gpu_count = pod_info.get("gpuCount", 0)
+  gpu_name = (
+      machine.get("gpuDisplayName")
+      or pod_info.get("gpuDisplayName")
+      or pod_info.get("gpuName")
+      or machine.get("gpuTypeId")
+      or "GPU"
+  )
+  gpu_type_id = machine.get("gpuTypeId") or pod_info.get("gpuTypeId") or ""
+
+  vram_map = get_gpu_vram_map()
+  vram_per_gpu = vram_map.get(gpu_type_id.lower()) or vram_map.get(gpu_name.lower())
+
+  if gpu_count > 0:
+    if vram_per_gpu:
+      total_vram = vram_per_gpu * gpu_count
+      if gpu_count == 1:
+        gpu_display = f"1x {gpu_name} ({vram_per_gpu} GB VRAM)"
+      else:
+        gpu_display = f"{gpu_count}x {gpu_name} ({vram_per_gpu} GB each, {total_vram} GB total VRAM)"
+    else:
+      gpu_display = f"{gpu_count}x {gpu_name}"
+  else:
+    gpu_display = "CPU only (no dedicated GPU)"
+
+  vcpu = pod_info.get("vcpuCount")
+  vcpu_str = f"{vcpu} vCPUs" if vcpu else "N/A"
+
+  ram = pod_info.get("memoryInGb")
+  ram_str = f"{ram} GB" if ram else "N/A"
+
+  c_disk = pod_info.get("containerDiskInGb")
+  c_disk_str = f"{c_disk} GB" if c_disk else "N/A"
+
+  v_disk = pod_info.get("volumeInGb")
+  v_mount = pod_info.get("volumeMountPath") or "/workspace"
+  v_disk_str = f"{v_disk} GB (mounted at {v_mount})" if v_disk else "None"
+
+  container_stats = runtime.get("container") or {}
+  cpu_pct = container_stats.get("cpuPercent")
+  mem_pct = container_stats.get("memoryPercent")
+  runtime_gpus = runtime.get("gpus") or []
+  gpu_pct = None
+  gpu_mem_pct = None
+  if runtime_gpus and isinstance(runtime_gpus, list):
+    gpu_pct = runtime_gpus[0].get("gpuUtilPercent")
+    gpu_mem_pct = runtime_gpus[0].get("memoryUtilPercent")
+
+  host, port = get_pod_ssh_endpoint(pod_info)
+  if host and port and port != "unknown":
+    ssh_endpoint = f"{host}:{port}"
+    ssh_cmd = f"ssh -p {port} root@{host}"
+  else:
+    ssh_endpoint = "N/A"
+    ssh_cmd = "N/A"
+
+  image = pod_info.get("imageName") or "N/A"
+
+  print("=" * 80)
+  print(f"Pod Information: {name} ({target_pod_id})")
+  print("=" * 80)
+  print(f"Status:         {status} ({pod_type})")
+  if created_display:
+    print(f"Uptime:         {uptime_str} (created: {created_display})")
+  else:
+    print(f"Uptime:         {uptime_str}")
+  print(f"Cost:           {cost_str}")
+  print(f"Datacenter:     {loc_str}")
+  print()
+  print("-- Hardware & Resources " + "-" * 56)
+  print(f"GPU:            {gpu_display}")
+  print(f"CPU:            {vcpu_str}")
+  print(f"Memory (RAM):   {ram_str}")
+  print(f"Container Disk: {c_disk_str}")
+  print(f"Network Volume: {v_disk_str}")
+
+  has_live_metrics = (cpu_pct is not None or mem_pct is not None or gpu_pct is not None or gpu_mem_pct is not None)
+  if has_live_metrics:
+    print()
+    print("-- Live Utilization " + "-" * 60)
+    if cpu_pct is not None:
+      print(f"CPU Usage:      {cpu_pct}%")
+    if mem_pct is not None:
+      print(f"RAM Usage:      {mem_pct}%")
+    if gpu_pct is not None:
+      print(f"GPU Compute:    {gpu_pct}%")
+    if gpu_mem_pct is not None:
+      print(f"GPU VRAM:       {gpu_mem_pct}%")
+
+  print()
+  print("-- Network & Access " + "-" * 60)
+  print(f"SSH Endpoint:   {ssh_endpoint}")
+  print(f"SSH Command:    {ssh_cmd}")
+  print(f"Docker Image:   {image}")
+  print("=" * 80)
+
+
 def cmd_stop(args):
   target_pod_id = resolve_pod_id(args)
   print(f"Stopping pod '{target_pod_id}'...")
@@ -1129,11 +1372,6 @@ def cmd_terminate(args):
     print(f"Termination request sent for pod '{target_pod_id}'.")
   except Exception as e:
     fatal(f"Failed to terminate pod: {e}", exc=e.__class__)
-
-
-def run_graphql(query):
-  from runpod.api.graphql import run_graphql_query
-  return run_graphql_query(query)
 
 
 def cmd_gpus(args):
@@ -1808,6 +2046,29 @@ def main(args=None):
   # List Command
   subparsers.add_parser("list", help="List all your RunPod instances")
 
+  # Info Command
+  info_parser = subparsers.add_parser("info", help="Show detailed information about a RunPod instance")
+  info_parser.add_argument(
+      "-p",
+      "--pod",
+      dest="pod",
+      default=None,
+      help="The ID of the pod (defaults to last created pod)"
+  )
+  info_parser.add_argument(
+      "pod_id",
+      nargs="?",
+      default=None,
+      help="The ID of the pod (optional, defaults to last created pod)"
+  )
+  info_parser.add_argument(
+      "--json",
+      action="store_true",
+      dest="json_output",
+      default=False,
+      help="Output raw pod details in JSON format"
+  )
+
   # Stop Command
   stop_parser = subparsers.add_parser("stop", help="Stop a running RunPod instance")
   stop_parser.add_argument(
@@ -1899,6 +2160,8 @@ def main(args=None):
     cmd_cp(args)
   elif args.command == "list":
     cmd_list(args)
+  elif args.command == "info":
+    cmd_info(args)
   elif args.command == "stop":
     cmd_stop(args)
   elif args.command == "terminate":

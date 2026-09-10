@@ -4,7 +4,8 @@ A Python command-line interface to manage RunPod instances (create, list, stop, 
 
 ## Features
 
-- **Docker-like Subcommands**: Simple interface to `create`, `list`, `stop`, `terminate`, `templates`, `gpus`, `run`, `exec`, and `cp`.
+- **Docker-like Subcommands**: Simple interface to `create`, `list`, `info`, `stop`, `terminate`, `templates`, `gpus`, `run`, `exec`, and `cp`.
+- **Rich Pod Inspection (`info`)**: Inspect comprehensive pod specifications mimicking the RunPod dashboard "Details" tab, including GPU model, VRAM size, allocated vCPUs, system RAM, disk volumes, live utilization metrics (CPU %, RAM %, GPU %, VRAM %), uptime, datacenter location, and direct SSH connection details.
 - **Automatic Pod & Job Memory**: Automatically remembers the last created pod ID in `~/.config/runpod_shell/.last_pod_id` and the last executed job ID in `~/.config/runpod_shell/.last_job_id` (overrideable with `RUNPOD_SHELL_CONFIG_DIR`, `RUNPOD_SHELL_LAST_POD_ID_FILE`, or `RUNPOD_SHELL_LAST_JOB_ID_FILE`). All pod commands (`run`, `exec`, `ps`, `logs`, `kill`, `cp`, `stop`, `terminate`) work seamlessly without having to re-type the pod ID, and commands managing jobs (`logs`, `kill`) implicitly target the last executed job unless overridden with `-j` / `--job`.
 - **Seamless File Transfers (`cp`)**: Transfer files and directories to and from RunPod instances via `scp` with intuitive `[pod_id:]path` and `:/path` syntax, automatic SSH port & key resolution, recursive copying (`-r`), and attribute preservation (`-P`).
 - **In-Memory Secret & Environment Injection**: Pass sensitive secrets (e.g. S3/GCS keys, R2 tokens) into remote scripts in-memory via SSH with `--env` / `-e` or `--env-file` without persisting credentials to the remote pod disk.
@@ -123,7 +124,31 @@ runpod-shell list
 
 ---
 
-### 3. `templates`
+### 3. `info`
+Shows detailed information about a specific pod or the last created/used pod (mimicking the RunPod dashboard "Details" tab). Displays hardware specifications (GPU model & VRAM, allocated vCPUs, RAM size, container & volume disk sizes), live utilization metrics (CPU, RAM, GPU compute & VRAM), uptime, cost, datacenter location, and direct SSH connection strings. Supports `--json` for automation.
+
+```bash
+# Show info for the last created pod
+runpod-shell info
+
+# Specify a pod explicitly
+runpod-shell info <pod-id>
+runpod-shell info -p <pod-id>
+runpod-shell info --pod <pod-id>
+
+# Output raw JSON
+runpod-shell info <pod-id> --json
+```
+
+| Argument / Flag | Default | Description |
+|---|---|---|
+| `pod-id` | *None* | Target pod ID (optional positional, defaults to last created pod) |
+| `-p`, `--pod` | *None* | Target pod ID (defaults to last created pod) |
+| `--json` | `False` | Output raw pod details in JSON format |
+
+---
+
+### 4. `templates`
 Lists available pod templates associated with your account and public library, showing Template ID, Name, and Image name. Supports optional regex filtering.
 
 ```bash
@@ -143,7 +168,7 @@ runpod-shell templates -r "pytorch|cuda"
 
 ---
 
-### 4. `stop`
+### 5. `stop`
 Stops a running pod (releases GPU resources, but retains data on the persistent network volume). If `<pod-id>` is omitted, automatically targets the last created pod.
 
 ```bash
@@ -163,7 +188,7 @@ runpod-shell stop --pod <pod-id>
 
 ---
 
-### 5. `terminate`
+### 6. `terminate`
 Deletes a pod and releases all associated resources. If `<pod-id>` is omitted, automatically targets the last created pod. Also clears the cached `.last_pod_id` if it matches.
 
 ```bash
@@ -183,7 +208,7 @@ runpod-shell terminate --pod <pod-id>
 
 ---
 
-### 6. `gpus`
+### 7. `gpus`
 Retrieves and lists all available GPU models, including display names, VRAM sizes, maximum GPU configurations, and hourly pricing (Secure vs. Community cloud). Supports optional regex filtering on GPU ID or Display Name (case-insensitive).
 
 ```bash
@@ -203,7 +228,7 @@ runpod-shell gpus -r "RTX 40\d0"
 
 ---
 
-### 7. `exec`
+### 8. `exec`
 Uploads and executes an arbitrary local script on an active pod via SSH. Supports foreground streaming or detached background execution, in-memory environment variable injection, and default pod resolution. Automatically remembers the executed Job ID in `~/.config/runpod_shell/.last_job_id`.
 
 ```bash
@@ -232,7 +257,7 @@ runpod-shell exec -p <pod-id> <script-path> [OPTIONS]
 
 ---
 
-### 8. `run`
+### 9. `run`
 Executes an arbitrary command line directly (binary + args) on an active pod via SSH. Supports foreground streaming or detached background execution, in-memory environment variable injection, and default pod resolution. Automatically remembers the executed Job ID in `~/.config/runpod_shell/.last_job_id`.
 
 ```bash
@@ -267,7 +292,7 @@ runpod-shell run -p <pod-id> -d python train.py
 
 ---
 
-### 9. `ps`
+### 10. `ps`
 Lists remote processes and background jobs managed by `runpod-shell` on the pod, including Job ID, PID, running/completed/failed status, start time, duration, and log file path. If `<pod-id>` is omitted, automatically targets the last created pod.
 
 ```bash
@@ -289,7 +314,7 @@ runpod-shell ps --pod <pod-id>
 
 ---
 
-### 10. `logs`
+### 11. `logs`
 Inspects remote execution logs with full display (`cat`), tailing the last N lines, or live streaming (`-f`). If `-p`/`--pod` or `<pod-id>` is omitted, automatically targets the last created pod. If `-j`/`--job` or `<job-id>` is omitted, automatically targets the last executed job.
 
 ```bash
@@ -319,7 +344,7 @@ runpod-shell logs -p <pod-id> -j <job-id> -f
 
 ---
 
-### 11. `kill`
+### 12. `kill`
 Terminates a remote job and its entire process group. By default, sends `SIGTERM` first, monitors process termination, and escalates to `SIGKILL` if the job has not exited within `--timeout` seconds. If `-p`/`--pod` or `<pod-id>` is omitted, automatically targets the last created pod. If `-j`/`--job` or `<job-id>` is omitted, automatically targets the last executed job.
 
 ```bash
@@ -347,7 +372,7 @@ runpod-shell kill -p <pod-id> -j <job-id-or-pid> [OPTIONS]
 
 ---
 
-### 12. `cp`
+### 13. `cp`
 Copies files or directories between the local host and an active RunPod instance using `scp`. Supports automatic SSH port and key detection, directory recursion (`-r`), attribute preservation (`-P`), and remote path resolution using `:` or `<pod-id>:`.
 
 Remote paths are distinguished by a colon (`:`):

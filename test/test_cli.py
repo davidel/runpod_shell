@@ -1963,6 +1963,128 @@ class TestRunPodShellCLI(unittest.TestCase):
         verbose=True
     )
 
+  def test_format_uptime(self):
+    self.assertEqual(cli.format_uptime(None), "N/A")
+    self.assertEqual(cli.format_uptime(-1), "N/A")
+    self.assertEqual(cli.format_uptime(45), "45s")
+    self.assertEqual(cli.format_uptime(125), "2m 5s")
+    self.assertEqual(cli.format_uptime(3665), "1h 1m 5s")
+    self.assertEqual(cli.format_uptime(90061), "1d 1h 1m 1s")
+
+  @patch("runpod_shell.cli.run_graphql")
+  @patch("runpod.get_gpus")
+  def test_info_command_formatted_output(self, mock_get_gpus, mock_run_graphql):
+    mock_get_gpus.return_value = [
+        {"id": "NVIDIA GeForce RTX 4090", "displayName": "RTX 4090", "memoryInGb": 24}
+    ]
+    mock_run_graphql.return_value = {
+        "data": {
+            "pod": {
+                "id": "pod-123",
+                "name": "my-worker",
+                "desiredStatus": "RUNNING",
+                "createdAt": "2026-09-10T10:00:00.000Z",
+                "costPerHr": 0.74,
+                "podType": "COMMUNITY",
+                "imageName": "runpod/pytorch:latest",
+                "vcpuCount": 16,
+                "memoryInGb": 64,
+                "containerDiskInGb": 50,
+                "volumeInGb": 100,
+                "volumeMountPath": "/workspace",
+                "gpuCount": 1,
+                "runtime": {
+                    "uptimeInSeconds": 3665,
+                    "ports": [
+                        {"privatePort": 22, "publicPort": 2222, "ip": "1.2.3.4"}
+                    ],
+                    "container": {"cpuPercent": 15, "memoryPercent": 25},
+                    "gpus": [{"gpuUtilPercent": 98, "memoryUtilPercent": 80}]
+                },
+                "machine": {
+                    "gpuDisplayName": "RTX 4090",
+                    "gpuTypeId": "NVIDIA GeForce RTX 4090",
+                    "location": "US",
+                    "dataCenterId": "US-NC-1"
+                }
+            }
+        }
+    }
+
+    test_args = ["cli.py", "--api-key", "fake-key", "info", "-p", "pod-123"]
+    with patch.object(sys, "argv", test_args):
+      with patch("builtins.print") as mock_print:
+        cli.main()
+
+    output = "\n".join(call[0][0] for call in mock_print.call_args_list if call[0])
+    self.assertIn("my-worker (pod-123)", output)
+    self.assertIn("RUNNING (COMMUNITY)", output)
+    self.assertIn("1h 1m 5s", output)
+    self.assertIn("1x RTX 4090 (24 GB VRAM)", output)
+    self.assertIn("16 vCPUs", output)
+    self.assertIn("64 GB", output)
+    self.assertIn("50 GB", output)
+    self.assertIn("100 GB (mounted at /workspace)", output)
+    self.assertIn("CPU Usage:      15%", output)
+    self.assertIn("RAM Usage:      25%", output)
+    self.assertIn("GPU Compute:    98%", output)
+    self.assertIn("GPU VRAM:       80%", output)
+    self.assertIn("1.2.3.4:2222", output)
+    self.assertIn("ssh -p 2222 root@1.2.3.4", output)
+
+  @patch("runpod_shell.cli.run_graphql")
+  def test_info_command_json_output(self, mock_run_graphql):
+    mock_run_graphql.return_value = {
+        "data": {
+            "pod": {
+                "id": "pod-123",
+                "name": "my-worker",
+                "desiredStatus": "RUNNING"
+            }
+        }
+    }
+
+    test_args = ["cli.py", "--api-key", "fake-key", "info", "--json", "pod-123"]
+    with patch.object(sys, "argv", test_args):
+      with patch("builtins.print") as mock_print:
+        cli.main()
+
+    mock_print.assert_called_once()
+    printed_json = mock_print.call_args[0][0]
+    self.assertIn('"id": "pod-123"', printed_json)
+    self.assertIn('"name": "my-worker"', printed_json)
+
+  @patch("runpod_shell.cli.run_graphql", side_effect=Exception("GraphQL error"))
+  @patch("runpod.get_pod")
+  def test_info_command_fallback_to_get_pod(self, mock_get_pod, mock_run_graphql):
+    mock_get_pod.return_value = {
+        "id": "pod-fallback",
+        "name": "fallback-worker",
+        "desiredStatus": "RUNNING",
+        "vcpuCount": 4,
+        "memoryInGb": 16,
+        "gpuCount": 0
+    }
+
+    test_args = ["cli.py", "--api-key", "fake-key", "info", "-p", "pod-fallback"]
+    with patch.object(sys, "argv", test_args):
+      with patch("builtins.print") as mock_print:
+        cli.main()
+
+    output = "\n".join(call[0][0] for call in mock_print.call_args_list if call[0])
+    self.assertIn("fallback-worker (pod-fallback)", output)
+    self.assertIn("CPU only (no dedicated GPU)", output)
+    self.assertIn("4 vCPUs", output)
+    self.assertIn("16 GB", output)
+
+  @patch("runpod_shell.cli.run_graphql", side_effect=Exception("GraphQL error"))
+  @patch("runpod.get_pod", return_value=None)
+  def test_info_command_pod_not_found(self, mock_get_pod, mock_run_graphql):
+    test_args = ["cli.py", "--api-key", "fake-key", "info", "-p", "nonexistent-pod"]
+    with patch.object(sys, "argv", test_args):
+      with self.assertRaises(FileNotFoundError):
+        cli.main()
+
 
 if __name__ == "__main__":
   unittest.main()
